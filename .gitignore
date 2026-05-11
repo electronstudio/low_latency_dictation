@@ -1,0 +1,10 @@
+# Build artifacts
+dictation
+*.o
+*.d
+
+# Vendored static libraries
+libs/*.a
+
+# Model binaries
+models/*.bin
