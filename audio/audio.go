@@ -68,9 +68,10 @@ type AudioAsync struct {
 	running bool
 	mu      sync.Mutex
 
-	audio    []float32
-	audioPos int
-	audioLen int
+	audio      []float32
+	audioPos   int
+	audioLen   int
+	full_audio []float32
 }
 
 // NewAudioAsync creates a new async audio capture instance that keeps lenMs
@@ -132,9 +133,11 @@ func (a *AudioAsync) Init(captureID int, sampleRate int) error {
 	fmt.Fprintf(os.Stderr, "%s:     - samples per frame: %d\n", "audio.Init", obt.samples)
 
 	a.sampleRate = int(obt.freq)
-	a.audio = make([]float32, (a.sampleRate*a.lenMs)/1000)
+	bufSize := (a.sampleRate * a.lenMs) / 1000
+	a.audio = make([]float32, bufSize)
 	a.audioPos = 0
 	a.audioLen = 0
+	a.full_audio = make([]float32, 0, bufSize)
 	return nil
 }
 
@@ -176,6 +179,7 @@ func (a *AudioAsync) Clear() error {
 	defer a.mu.Unlock()
 	a.audioPos = 0
 	a.audioLen = 0
+	a.full_audio = a.full_audio[:0]
 	return nil
 }
 
@@ -198,14 +202,16 @@ func (a *AudioAsync) Callback(samples []float32) {
 		return
 	}
 
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.full_audio = append(a.full_audio, samples...)
+
 	nSamples := len(samples)
 	if nSamples > len(a.audio) {
 		nSamples = len(a.audio)
 		samples = samples[len(samples)-nSamples:]
 	}
-
-	a.mu.Lock()
-	defer a.mu.Unlock()
 
 	bufSize := len(a.audio)
 	for i := 0; i < nSamples; i++ {
@@ -261,6 +267,13 @@ func (a *AudioAsync) Get(ms int) []float32 {
 
 // SampleRate returns the actual sample rate obtained from SDL.
 func (a *AudioAsync) SampleRate() int { return a.sampleRate }
+
+// GetFullAudio returns the complete, un-truncated audio captured so far.
+func (a *AudioAsync) GetFullAudio() []float32 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.full_audio
+}
 
 // PollEvents returns false if the user requested quit (window close, etc.).
 func PollEvents() bool {

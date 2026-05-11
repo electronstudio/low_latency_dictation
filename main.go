@@ -71,6 +71,28 @@ func main() {
 		language:     "en",
 		model:        "models/ggml-tiny.en-q8_0.bin",
 	}
+	strategy := transcribe.SamplingGreedy
+	if params.beamSize > 1 {
+		strategy = transcribe.SamplingBeamSearch
+	}
+
+	wparams := transcribe.FullParams{
+		Strategy:       strategy,
+		PrintProgress:  false,
+		PrintSpecial:   params.printSpecial,
+		PrintRealtime:  false,
+		PrintTimestamp: !params.noTimestamps,
+		Translate:      false,
+		SingleSegment:  false,
+		MaxTokens:      params.maxTokens,
+		Language:       params.language,
+		NThreads:       params.nThreads,
+		AudioCtx:       params.audioCtx,
+		TdrzEnable:     false,
+		NoFallback:     params.noFallback,
+		SuppressNST:    true,
+		BeamSize:       params.beamSize,
+	}
 
 	// init audio
 	mic := audio.NewAudioAsync(params.lengthMs)
@@ -96,6 +118,14 @@ func main() {
 		os.Exit(2)
 	}
 	defer ctx.Free()
+
+	ctx2, err := transcribe.InitFromFile("models/ggml-large-v3-turbo-q8_0.bin", cp)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(2)
+	}
+
+	defer ctx2.Free()
 
 	nIter := 0
 
@@ -138,12 +168,12 @@ mainloop:
 		tNow := time.Now()
 		tDiff := tNow.Sub(tLast).Milliseconds()
 
-		if tDiff < 250 {
+		if tDiff < 200 {
 			time.Sleep(16 * time.Millisecond)
 			continue
 		}
 
-		pcmf32New := mic.Get(250)
+		pcmf32New := mic.Get(500)
 
 		if vad.SimpleVAD(pcmf32New, transcribe.WhisperSampleRate, 250, params.vadThold, params.freqThold, false) {
 			pcmf32New = mic.Get(params.lengthMs)
@@ -154,28 +184,6 @@ mainloop:
 		tLast = tNow
 
 		// run the inference
-		strategy := transcribe.SamplingGreedy
-		if params.beamSize > 1 {
-			strategy = transcribe.SamplingBeamSearch
-		}
-
-		wparams := transcribe.FullParams{
-			Strategy:       strategy,
-			PrintProgress:  true,
-			PrintSpecial:   params.printSpecial,
-			PrintRealtime:  false,
-			PrintTimestamp: !params.noTimestamps,
-			Translate:      false,
-			SingleSegment:  false,
-			MaxTokens:      params.maxTokens,
-			Language:       params.language,
-			NThreads:       params.nThreads,
-			AudioCtx:       params.audioCtx,
-			TdrzEnable:     false,
-			NoFallback:     params.noFallback,
-			SuppressNST:    true,
-			BeamSize:       params.beamSize,
-		}
 
 		if err := ctx.Full(wparams, pcmf32New); err != nil {
 			fmt.Fprintf(os.Stderr, "main: failed to process audio: %v\n", err)
@@ -232,5 +240,19 @@ mainloop:
 	}
 
 	mic.Pause()
-	ctx.PrintTimings()
+	fmt.Println("FINAL:")
+	if err := ctx2.Full(wparams, mic.GetFullAudio()); err != nil {
+		fmt.Fprintf(os.Stderr, "main: failed to process audio: %v\n", err)
+		os.Exit(6)
+	}
+
+	nSegments := ctx.NSegments()
+	for i := 0; i < nSegments; i++ {
+		text := ctx.SegmentText(i)
+		fmt.Print(text)
+
+	}
+	fmt.Println()
+	os.Stdout.Sync()
+	//ctx.PrintTimings()
 }
