@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -32,6 +33,21 @@ type whisperParams struct {
 	flashAttn    bool
 	language     string
 	model        string
+}
+
+// Segment represents a single transcribed segment with its text and time range.
+type Segment struct {
+	Text  string
+	Start int64
+	End   int64
+}
+
+// String returns the segment formatted as "[t0 --> t1]  text".
+func (s Segment) String() string {
+	return fmt.Sprintf("[%s --> %s]  %s",
+		timestamp.ToTimestamp(s.Start, false),
+		timestamp.ToTimestamp(s.End, false),
+		s.Text)
 }
 
 func main() {
@@ -95,6 +111,9 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	isRunning := true
+
+	// segments collects all transcribed segments across the session.
+	var segments []Segment
 
 	// Poll SDL events in a goroutine so the main loop can respond to both
 	// SDL quit events and OS signals.
@@ -177,20 +196,32 @@ mainloop:
 			t0 := ctx.SegmentT0(i) + transcriptionStart/10
 			t1 := ctx.SegmentT1(i) + transcriptionStart/10
 
-			output := fmt.Sprintf("[%s --> %s]  %s",
-				timestamp.ToTimestamp(t0, false),
-				timestamp.ToTimestamp(t1, false),
-				text)
-
-			if ctx.SegmentSpeakerTurnNext(i) {
-				output += " [SPEAKER_TURN]"
+			seg := Segment{
+				Text:  text,
+				Start: t0,
+				End:   t1,
 			}
 
-			output += "\n"
-			fmt.Print(output)
-			os.Stdout.Sync()
+			for j, existing := range segments {
+				if existing.Start == seg.Start {
+					segments = segments[:j]
+					break
+				}
+				if seg.Start > existing.Start && seg.End < existing.End && strings.HasPrefix(existing.Text, seg.Text) {
+					segments = segments[:j]
+					break
+				}
+			}
+			segments = append(segments, seg)
+
+			// fmt.Println(seg.String())
+			// os.Stdout.Sync()
 		}
 
+		fmt.Println()
+		for _, seg := range segments {
+			fmt.Println(seg.String())
+		}
 		fmt.Println()
 		fmt.Printf("### Transcription %d END\n", nIter)
 
