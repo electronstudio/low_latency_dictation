@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
-	"strings"
 	"syscall"
 	"time"
 
@@ -139,17 +138,17 @@ mainloop:
 		tNow := time.Now()
 		tDiff := tNow.Sub(tLast).Milliseconds()
 
-		if tDiff < 500 {
-			time.Sleep(33 * time.Millisecond)
+		if tDiff < 250 {
+			time.Sleep(16 * time.Millisecond)
 			continue
 		}
 
-		pcmf32New := mic.Get(500)
+		pcmf32New := mic.Get(250)
 
 		if vad.SimpleVAD(pcmf32New, transcribe.WhisperSampleRate, 250, params.vadThold, params.freqThold, false) {
 			pcmf32New = mic.Get(params.lengthMs)
 		} else {
-			time.Sleep(33 * time.Millisecond)
+			time.Sleep(16 * time.Millisecond)
 			continue
 		}
 		tLast = tNow
@@ -203,16 +202,18 @@ mainloop:
 			}
 
 			for j, existing := range segments {
-				if existing.Start == seg.Start {
+				if existing.Start >= seg.Start-100 && existing.Start <= seg.Start+100 {
 					segments = segments[:j]
 					break
 				}
-				if seg.Start > existing.Start && seg.End < existing.End && strings.HasPrefix(existing.Text, seg.Text) {
-					segments = segments[:j]
-					break
-				}
+				// if seg.Start > existing.Start && seg.End < existing.End && strings.HasPrefix(existing.Text, seg.Text) {
+				// 	segments = segments[:j]
+				// 	break
+				// }
 			}
-			segments = append(segments, seg)
+			if len(segments) == 0 || segments[len(segments)-1].End <= seg.Start {
+				segments = append(segments, seg)
+			}
 
 			// fmt.Println(seg.String())
 			// os.Stdout.Sync()
@@ -220,7 +221,8 @@ mainloop:
 
 		fmt.Println()
 		for _, seg := range segments {
-			fmt.Println(seg.String())
+			//fmt.Println(seg.String())
+			fmt.Print(seg.Text)
 		}
 		fmt.Println()
 		fmt.Printf("### Transcription %d END\n", nIter)
