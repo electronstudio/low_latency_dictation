@@ -24,7 +24,7 @@ std::string to_timestamp(int64_t t, bool comma) {
     msec = msec - sec * 1000;
 
     char buf[32];
-    snprintf(buf, sizeof(buf), "%02d:%02d:%02d%s%03d", (int) hr, (int) min, (int) sec, comma ? "," : ".", (int) msec);
+    snprintf(buf, sizeof(buf), "%02d:%02d%s%03d", (int) min, (int) sec, comma ? "," : ".", (int) msec);
 
     return std::string(buf);
 }
@@ -83,7 +83,7 @@ bool vad_simple(std::vector<float> & pcmf32, int sample_rate, int last_ms, float
 
 // command-line parameters
 struct whisper_params {
-    int32_t n_threads  = std::min(4, (int32_t) std::thread::hardware_concurrency());
+    int32_t n_threads  = std::min(1, (int32_t) std::thread::hardware_concurrency());
     int32_t length_ms  = 30000;
     int32_t keep_ms    = 200;
     int32_t capture_id = -1;
@@ -172,7 +172,7 @@ int main(int argc, char ** argv) {
         // run the inference
 
         whisper_full_params wparams = whisper_full_default_params(params.beam_size > 1 ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY);
-        wparams.print_progress   = false;
+        wparams.print_progress   = true;
         wparams.print_special    = params.print_special;
         wparams.print_realtime   = false;
         wparams.print_timestamps = !params.no_timestamps;
@@ -190,7 +190,7 @@ int main(int argc, char ** argv) {
         wparams.prompt_tokens    = params.no_context ? nullptr : prompt_tokens.data();
         wparams.prompt_n_tokens  = params.no_context ? 0       : prompt_tokens.size();
         wparams.suppress_nst = true;
-        wparams.suppress_blank = true;
+        //wparams.suppress_blank = true;
 
         if (whisper_full(ctx, wparams, pcmf32.data(), pcmf32.size()) != 0) {
             fprintf(stderr, "%s: failed to process audio\n", argv[0]);
@@ -199,20 +199,21 @@ int main(int argc, char ** argv) {
 
         // print result;
 
-        const int64_t t1 = (t_last - t_start).count()/1000000;
-        const int64_t t0 = std::max(0.0, t1 - pcmf32.size()*1000.0/WHISPER_SAMPLE_RATE);
+        const int64_t transcription_end = (t_last - t_start).count()/1000000;
+        const int64_t transcription_start = std::max(0.0, transcription_end - pcmf32.size()*1000.0/WHISPER_SAMPLE_RATE);
 
         printf("\n");
-        printf("### Transcription %d START | t0 = %d ms | t1 = %d ms\n", n_iter, (int) t0, (int) t1);
+        printf("### Transcription %d START | t0 = %d ms | t1 = %d ms\n", n_iter, (int) transcription_start, (int) transcription_end);
         printf("\n");
 
         const int n_segments = whisper_full_n_segments(ctx);
         for (int i = 0; i < n_segments; ++i) {
             const char * text = whisper_full_get_segment_text(ctx, i);
-            const int64_t t0 = whisper_full_get_segment_t0(ctx, i);
-            const int64_t t1 = whisper_full_get_segment_t1(ctx, i);
+            const int64_t t0 = whisper_full_get_segment_t0(ctx, i)+transcription_start/10 ;
+            const int64_t t1 = whisper_full_get_segment_t1(ctx, i)+transcription_start/10 ;
 
             std::string output = "[" + to_timestamp(t0, false) + " --> " + to_timestamp(t1, false) + "]  " + text;
+            //std::string output = "[" + std::to_string(t0) + " --> " + std::to_string(t1) + "]  " + text;
 
             if (whisper_full_get_segment_speaker_turn_next(ctx, i)) {
                 output += " [SPEAKER_TURN]";
