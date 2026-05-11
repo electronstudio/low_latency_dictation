@@ -1,7 +1,13 @@
 # Build artifacts
 dictation
+dictation-go
 *.o
 *.d
+
+# Go build artifacts
+*.exe
+*.test
+*.prof
 
 # Vendored static libraries
 libs/*.a
