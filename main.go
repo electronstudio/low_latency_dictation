@@ -37,6 +37,45 @@ func printToScreen(x, y int, style tcell.Style, text string) {
 	}
 }
 
+func printWrapped(x, y, maxWidth, maxLines int, style tcell.Style, text string) {
+	if maxWidth <= 0 || maxLines <= 0 {
+		return
+	}
+
+	var lines []string
+	for len(text) > 0 {
+		if len(text) <= maxWidth {
+			lines = append(lines, text)
+			break
+		}
+
+		cut := maxWidth
+		for i := maxWidth; i > 0; i-- {
+			if text[i] == ' ' {
+				cut = i
+				break
+			}
+		}
+		// If there is no space, break hard.
+		if cut == 0 {
+			cut = maxWidth
+		}
+		lines = append(lines, text[:cut])
+		if text[cut] == ' ' {
+			text = text[cut+1:]
+		} else {
+			text = text[cut:]
+		}
+	}
+
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	for i, line := range lines {
+		printToScreen(x, y+i, style, line)
+	}
+}
+
 func printStatus(status string) {
 	if screenHeight < 1 {
 		return
@@ -52,6 +91,7 @@ func die(code int, format string, args ...interface{}) {
 
 var (
 	screen       tcell.Screen
+	screenWidth  int
 	screenHeight int
 	statusStyle  = tcell.StyleDefault.Reverse(true)
 )
@@ -162,9 +202,7 @@ func main() {
 	defer screen.Fini()
 	screen.SetStyle(tcell.StyleDefault)
 	screen.Clear()
-	_, screenHeight = screen.Size()
-
-	cursorY := screenHeight - 1 // draw from bottom up
+	screenWidth, screenHeight = screen.Size()
 
 	// Event polling goroutine for tcell (quit / resize)
 	go func() {
@@ -245,18 +283,13 @@ mainloop:
 			}
 		}
 
-		// redraw all segments on screen (from bottom up)
+		// redraw all segments on screen
 		screen.Clear()
-		_, curH := screen.Size()
-		cursorY = curH - 1
-		for _, seg := range segments {
-			line := seg.Text
-			printToScreen(0, 0, tcell.StyleDefault, line)
-			cursorY--
-			if cursorY < 0 {
-				break
-			}
+		var sb strings.Builder
+		for i := 0; i < nSegments; i++ {
+			sb.WriteString(ctx.SegmentText(i))
 		}
+		printWrapped(0, 0, screenWidth, screenHeight-1, tcell.StyleDefault, sb.String())
 
 		printStatus("LISTENING")
 		screen.Show()
