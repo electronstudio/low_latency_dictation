@@ -101,6 +101,10 @@ type FullParams struct {
 
 // Full runs the full transcription pipeline on the provided samples.
 func (c *Context) Full(params FullParams, samples []float32) error {
+	if len(samples) == 0 {
+		return nil
+	}
+
 	var cpp C.struct_whisper_full_params
 	if params.Strategy == SamplingBeamSearch {
 		cpp = C.whisper_full_default_params(C.WHISPER_SAMPLING_BEAM_SEARCH)

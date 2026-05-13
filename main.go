@@ -49,6 +49,8 @@ func (s Segment) String() string {
 		s.Text)
 }
 
+var debug = false
+
 func main() {
 	transcribe.BackendLoadAll()
 
@@ -119,7 +121,9 @@ func main() {
 	}
 	defer ctx.Free()
 
-	ctx2, err := transcribe.InitFromFile("models/ggml-large-v3-turbo-q8_0.bin", cp)
+	//m := "models/ggml-large-v3-turbo-q8_0.bin"
+	m := "models/ggml-base.en.bin"
+	ctx2, err := transcribe.InitFromFile(m, cp)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(2)
@@ -183,6 +187,11 @@ mainloop:
 		}
 		tLast = tNow
 
+		if len(pcmf32New) == 0 {
+			time.Sleep(16 * time.Millisecond)
+			continue
+		}
+
 		// run the inference
 
 		if err := ctx.Full(wparams, pcmf32New); err != nil {
@@ -193,9 +202,11 @@ mainloop:
 		transcriptionEnd := tLast.Sub(tStart).Milliseconds()
 		transcriptionStart := max(0, transcriptionEnd-int64(len(pcmf32New))*1000/int64(transcribe.WhisperSampleRate))
 
-		fmt.Println()
-		fmt.Printf("### Transcription %d START | t0 = %d ms | t1 = %d ms\n", nIter, transcriptionStart, transcriptionEnd)
-		fmt.Println()
+		if debug {
+			fmt.Println()
+			fmt.Printf("### Transcription %d START | t0 = %d ms | t1 = %d ms\n", nIter, transcriptionStart, transcriptionEnd)
+			fmt.Println()
+		}
 
 		nSegments := ctx.NSegments()
 		for i := 0; i < nSegments; i++ {
@@ -227,28 +238,34 @@ mainloop:
 			// os.Stdout.Sync()
 		}
 
-		fmt.Println()
+		fmt.Print("\r\033[J")
+
 		for _, seg := range segments {
 			//fmt.Println(seg.String())
 			fmt.Print(seg.Text)
 		}
-		fmt.Println()
-		fmt.Printf("### Transcription %d END\n", nIter)
-
+		if debug {
+			fmt.Println()
+			fmt.Printf("### Transcription %d END\n", nIter)
+		}
 		nIter++
 		os.Stdout.Sync()
 	}
 
 	mic.Pause()
-	fmt.Println("FINAL:")
-	if err := ctx2.Full(wparams, mic.GetFullAudio()); err != nil {
-		fmt.Fprintf(os.Stderr, "main: failed to process audio: %v\n", err)
-		os.Exit(6)
+	//	fmt.Println("FINAL:")
+	fullAudio := mic.GetFullAudio()
+	if len(fullAudio) > 0 {
+		if err := ctx2.Full(wparams, fullAudio); err != nil {
+			fmt.Fprintf(os.Stderr, "main: failed to process audio: %v\n", err)
+			os.Exit(6)
+		}
 	}
 
-	nSegments := ctx.NSegments()
+	fmt.Print("\r\033[J")
+	nSegments := ctx2.NSegments()
 	for i := 0; i < nSegments; i++ {
-		text := ctx.SegmentText(i)
+		text := ctx2.SegmentText(i)
 		fmt.Print(text)
 
 	}
