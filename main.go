@@ -123,26 +123,6 @@ func main() {
 		BeamSize:       params.beamSize,
 	}
 
-	// init tcell screen
-	tcell.SetEncodingFallback(tcell.EncodingFallbackASCII)
-	var err error
-	screen, err = tcell.NewScreen()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "main: failed to create tcell screen: %v\n", err)
-		os.Exit(1)
-	}
-	if err := screen.Init(); err != nil {
-		fmt.Fprintf(os.Stderr, "main: failed to init tcell screen: %v\n", err)
-		os.Exit(1)
-	}
-	defer screen.Fini()
-	screen.SetStyle(tcell.StyleDefault)
-	screen.Clear()
-	_, screenHeight = screen.Size()
-	//die(0, "FOO "+strconv.Itoa(screenHeight))
-	printStatus("LOADING")
-	screen.Show()
-
 	// init audio
 	mic := audio.NewAudioAsync(params.lengthMs)
 	if err := mic.Init(params.captureID, transcribe.WhisperSampleRate); err != nil {
@@ -198,6 +178,25 @@ func main() {
 		}
 	}()
 
+	// init tcell screen
+	tcell.SetEncodingFallback(tcell.EncodingFallbackASCII)
+
+	screen, err = tcell.NewScreen()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "main: failed to create tcell screen: %v\n", err)
+		os.Exit(1)
+	}
+	if err := screen.Init(); err != nil {
+		fmt.Fprintf(os.Stderr, "main: failed to init tcell screen: %v\n", err)
+		os.Exit(1)
+	}
+	defer screen.Fini()
+	screen.SetStyle(tcell.StyleDefault)
+	screen.Clear()
+	_, screenHeight = screen.Size()
+
+	cursorY := screenHeight - 1 // draw from bottom up
+
 	// Event polling goroutine for tcell (quit / resize)
 	go func() {
 		for isRunning {
@@ -209,8 +208,6 @@ func main() {
 			}
 		}
 	}()
-
-	cursorY := screenHeight - 1 // draw from bottom up
 
 	printStatus("LISTENING")
 	screen.Show()
@@ -303,6 +300,9 @@ mainloop:
 		nIter++
 	}
 
+	printStatus("DOING FINAL TRANSCRIBE...")
+	screen.Show()
+
 	mic.Pause()
 	fullAudio := mic.GetFullAudio()
 	if len(fullAudio) > 0 {
@@ -312,17 +312,14 @@ mainloop:
 	}
 
 	// final print
-	screen.Clear()
+	screen.Fini()
 	_, finalH := screen.Size()
 	cursorY = finalH - 1
 	nSegments := ctx2.NSegments()
 	for i := 0; i < nSegments; i++ {
 		text := ctx2.SegmentText(i)
-		printToScreen(0, cursorY, tcell.StyleDefault, text)
-		cursorY--
-		if cursorY < 0 {
-			break
-		}
+		fmt.Print(text)
 	}
+	os.Exit(0)
 
 }
