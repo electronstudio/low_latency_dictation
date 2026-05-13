@@ -10,90 +10,41 @@ on:
 
 jobs:
   build-linux:
-    runs-on: ubuntu-latest
-    container:
-      image: electronstudio/ubuntu16-modern:latest
-      options: --user root
-      volumes:
-        # override /__e/node20 because GitHub Actions uses a version that requires too-recent glibc
-        - /tmp:/__e/node20
+    runs-on: ubuntu-22.04
 
     steps:
-      - name: fix node
-        run: |
-          ln -s /usr/local/bin /__e/node20/bin
-
       - uses: actions/checkout@v2
         with:
           submodules: recursive
 
-      - name: Install Vulkan
-        run: |
-          apt-get update -qq
-          wget -q http://archive.ubuntu.com/ubuntu/pool/universe/v/vulkan/libvulkan1_1.0.8.0+dfsg1-0ubuntu1_amd64.deb
-          wget -q http://archive.ubuntu.com/ubuntu/pool/universe/v/vulkan/libvulkan-dev_1.0.8.0+dfsg1-0ubuntu1_amd64.deb
-          dpkg -i libvulkan1_1.0.8.0+dfsg1-0ubuntu1_amd64.deb libvulkan-dev_1.0.8.0+dfsg1-0ubuntu1_amd64.deb
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "^1.24"
 
-      - name: Install modern g++ for glslc
+      - name: Install dependencies
         run: |
-          apt-get install -y software-properties-common
-          add-apt-repository -y ppa:ubuntu-toolchain-r/test
-          apt-get update -qq
-          apt-get install -y g++-7
-
-      - name: Build glslc
-        run: |
-          git clone --depth 1 https://github.com/google/shaderc.git /tmp/shaderc
-          cd /tmp/shaderc
-          python3 ./utils/git-sync-deps
-          mkdir build && cd build
-          cmake -DSHADERC_SKIP_TESTS=ON -DSHADERC_SKIP_EXAMPLES=ON -DCMAKE_CXX_COMPILER=g++-7 ..
-          make -j$(nproc) glslc
-          cp glslc/glslc /usr/local/bin/glslc
-          chmod +x /usr/local/bin/glslc
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential cmake git libsdl2-dev wget
+          wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
+          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
+          sudo apt-get update -qq
+          sudo apt-get install -y vulkan-sdk
 
       - name: Build
         run: |
           make GGML_VULKAN=ON
 
-      - name: Upload jar
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: dictate-linux-x86_64
-          path: ./dictate
-
-  build-linux-32bit:
-    runs-on: ubuntu-latest
-    container:
-      image: electronstudio/ubuntu16-modern:i386
-      options: --user root
-      volumes:
-        # override /__e/node20 because GitHub Actions uses a version that requires too-recent glibc
-        - /tmp:/__e/node20
-
-    steps:
-      - name: fix node
-        run: |
-          ln -s /usr/local/bin /__e/node20/bin
-
-      - uses: actions/checkout@v2
-        with:
-          submodules: recursive
-
-      - name: Build
-        run: |
-          make GGML_VULKAN=OFF
-
-      - name: Upload jar
-        uses: actions/upload-artifact@v4
-        with:
-          name: dictate-linux-i386
           path: ./dictate
 
   build-mac-arm64:
     runs-on: macos-26
     env:
       MACOSX_DEPLOYMENT_TARGET: 11.0
+      CGO_LDFLAGS_ALLOW: ".*"
 
     steps:
       - uses: actions/checkout@v2
