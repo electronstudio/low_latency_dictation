@@ -28,15 +28,15 @@ whisper_libs:
 			-DBUILD_SHARED_LIBS=OFF; \
 		cmake --build $(WHISPER_BUILD) --parallel $(CPU_COUNT); \
 		mkdir -p libs; \
-		cp $(WHISPER_BUILD)/src/libwhisper.a libs/; \
-		cp $(WHISPER_BUILD)/ggml/src/libggml.a libs/; \
-		cp $(WHISPER_BUILD)/ggml/src/libggml-base.a libs/; \
-		cp $(WHISPER_BUILD)/ggml/src/libggml-cpu.a libs/; \
+		cp $(WHISPER_BUILD)/src/libwhisper.a libs/ 2>/dev/null || cp $(WHISPER_BUILD)/src/whisper.lib libs/libwhisper.a; \
+		cp $(WHISPER_BUILD)/ggml/src/libggml.a libs/ 2>/dev/null || cp $(WHISPER_BUILD)/ggml/src/ggml.a libs/libggml.a 2>/dev/null || cp $(WHISPER_BUILD)/ggml/src/ggml.lib libs/libggml.a; \
+		cp $(WHISPER_BUILD)/ggml/src/libggml-base.a libs/ 2>/dev/null || cp $(WHISPER_BUILD)/ggml/src/ggml-base.a libs/libggml-base.a 2>/dev/null || cp $(WHISPER_BUILD)/ggml/src/ggml-base.lib libs/libggml-base.a; \
+		cp $(WHISPER_BUILD)/ggml/src/libggml-cpu.a libs/ 2>/dev/null || cp $(WHISPER_BUILD)/ggml/src/ggml-cpu.a libs/libggml-cpu.a 2>/dev/null || cp $(WHISPER_BUILD)/ggml/src/ggml-cpu.lib libs/libggml-cpu.a; \
 		if [ "$(GGML_VULKAN)" = "ON" ]; then \
-			cp $(WHISPER_BUILD)/ggml/src/ggml-vulkan/libggml-vulkan.a libs/; \
+			cp $(WHISPER_BUILD)/ggml/src/ggml-vulkan/libggml-vulkan.a libs/ 2>/dev/null || cp $(WHISPER_BUILD)/ggml/src/ggml-vulkan/ggml-vulkan.a libs/libggml-vulkan.a 2>/dev/null || cp $(WHISPER_BUILD)/ggml/src/ggml-vulkan/ggml-vulkan.lib libs/libggml-vulkan.a; \
 		fi \
 	fi
 
 clean:
-	rm -f $(BINARY) libs/*.a
+	rm -f $(BINARY) $(BINARY).exe libs/*.a libs/*.lib
 	rm -rf $(WHISPER_BUILD)

@@ -11,6 +11,8 @@ make
 make clean
 ```
 
+**Windows (MSYS2/MinGW):** The Makefile automatically handles library naming differences produced by CMake on Windows (e.g. `whisper.lib` or `ggml.lib` instead of `libwhisper.a`).
+
 ## Dependencies
 - **Go 1.24+**
 - **System-wide C headers:** `whisper.h`, `ggml*.h`, SDL2 headers
