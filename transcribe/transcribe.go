@@ -3,7 +3,7 @@ package transcribe
 
 /*
 #cgo CFLAGS: -I/usr/local/include
-#cgo LDFLAGS: ${SRCDIR}/../libs/libwhisper.a ${SRCDIR}/../libs/libggml.a ${SRCDIR}/../libs/libggml-base.a ${SRCDIR}/../libs/libggml-cpu.a ${SRCDIR}/../libs/libggml-vulkan.a -lvulkan -fopenmp -lstdc++ -lm
+#cgo LDFLAGS: ${SRCDIR}/../libs/libwhisper.a ${SRCDIR}/../libs/libggml.a ${SRCDIR}/../libs/libggml-base.a ${SRCDIR}/../libs/libggml-cpu.a -fopenmp -lstdc++ -lm
 
 #include <whisper.h>
 #include <ggml-backend.h>

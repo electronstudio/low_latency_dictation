@@ -27,12 +27,117 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install Vulkan
+        run: |
+          apt-get update -qq
+          wget -q http://archive.ubuntu.com/ubuntu/pool/universe/v/vulkan/libvulkan1_1.0.8.0+dfsg1-0ubuntu1_amd64.deb
+          wget -q http://archive.ubuntu.com/ubuntu/pool/universe/v/vulkan/libvulkan-dev_1.0.8.0+dfsg1-0ubuntu1_amd64.deb
+          dpkg -i libvulkan1_1.0.8.0+dfsg1-0ubuntu1_amd64.deb libvulkan-dev_1.0.8.0+dfsg1-0ubuntu1_amd64.deb
+
+      - name: Build glslc
+        run: |
+          git clone --depth 1 https://github.com/google/shaderc.git /tmp/shaderc
+          cd /tmp/shaderc
+          python3 ./utils/git-sync-deps
+          mkdir build && cd build
+          cmake -DSHADERC_SKIP_TESTS=ON -DSHADERC_SKIP_EXAMPLES=ON ..
+          make -j$(nproc) glslc
+          cp glslc/glslc /usr/local/bin/glslc
+          chmod +x /usr/local/bin/glslc
+
       - name: Build
         run: |
-          make
+          make GGML_VULKAN=ON
 
       - name: Upload jar
         uses: actions/upload-artifact@v4
         with:
           name: dictate-linux-x86_64
           path: ./dictate
+
+  build-linux-32bit:
+    runs-on: ubuntu-latest
+    container:
+      image: electronstudio/ubuntu16-modern:i386
+      options: --user root
+      volumes:
+        # override /__e/node20 because GitHub Actions uses a version that requires too-recent glibc
+        - /tmp:/__e/node20
+
+    steps:
+      - name: fix node
+        run: |
+          ln -s /usr/local/bin /__e/node20/bin
+
+      - uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+      - name: Build
+        run: |
+          make GGML_VULKAN=OFF
+
+      - name: Upload jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: dictate-linux-i386
+          path: ./dictate
+
+  build-mac-arm64:
+    runs-on: macos-26
+    env:
+      MACOSX_DEPLOYMENT_TARGET: 11.0
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+      - name: Build
+        run: |
+          make GGML_VULKAN=OFF
+
+      - name: Upload jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: dictate-macos-arm64
+          path: ./dictate
+
+  build-windows:
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "^1.24"
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          msystem: UCRT64
+          install: >-
+            base-devel
+            git
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-SDL2
+            mingw-w64-ucrt-x86_64-vulkan-loader
+            mingw-w64-ucrt-x86_64-vulkan-headers
+            mingw-w64-ucrt-x86_64-shaderc
+            mingw-w64-ucrt-x86_64-go
+
+      - name: Build
+        shell: msys2 {0}
+        run: |
+          make GGML_VULKAN=ON
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: dictate-windows-x86_64
+          path: ./dictate.exe
