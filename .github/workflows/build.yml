@@ -1,6 +1,5 @@
 name: Build
 
-# Controls when the workflow will run
 on:
   push:
   pull_request:
@@ -142,6 +141,7 @@ jobs:
       - name: Build
         shell: msys2 {0}
         run: |
+          go clean -cache
           make GGML_VULKAN=ON
 
       - name: Upload binary

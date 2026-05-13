@@ -7,9 +7,17 @@ WHISPER_LIBS := libs/libggml-base.a libs/libggml-cpu.a libs/libggml.a libs/libwh
 ifeq ($(GGML_VULKAN),ON)
 WHISPER_LIBS += libs/libggml-vulkan.a
 GO_TAGS := -tags vulkan
+# Detect Windows (MSYS2/MinGW/Cygwin) via uname so we link the right Vulkan lib
+WINDOWY := $(findstring MINGW,$(shell uname -s))$(findstring MSYS,$(shell uname -s))$(findstring CYGWIN,$(shell uname -s))
+# Default Vulkan link flags
+ifeq ($(WINDOWY),)
 VULKAN_LDFLAGS := -lvulkan
+else
+VULKAN_LDFLAGS := -lvulkan-1
+endif
+# Allow override via VULKAN_SDK environment variable (common in CI / Windows Vulkan SDK)
 ifdef VULKAN_SDK
-VULKAN_SDK_MSYS := $(subst \,/ ,$(VULKAN_SDK))
+VULKAN_SDK_MSYS := $(shell cygpath -u "$(VULKAN_SDK)" 2>/dev/null || echo "$(VULKAN_SDK)")
 VULKAN_LDFLAGS := -L$(VULKAN_SDK_MSYS)/Lib -lvulkan-1
 endif
 endif

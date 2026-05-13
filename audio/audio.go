@@ -2,8 +2,11 @@
 package audio
 
 /*
-#cgo pkg-config: sdl2
-#cgo LDFLAGS: -lSDL2
+#cgo linux pkg-config: sdl2
+#cgo linux LDFLAGS: -lSDL2
+#cgo darwin pkg-config: sdl2
+#cgo darwin LDFLAGS: -lSDL2
+#cgo windows LDFLAGS: -lmingw32 -mwindows -lSDL2main -lSDL2
 
 #include <SDL.h>
 #include <SDL_audio.h>
