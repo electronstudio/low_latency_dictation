@@ -2,7 +2,7 @@
 package transcribe
 
 /*
-#cgo CFLAGS: -I/usr/local/include
+#cgo CFLAGS: -I${SRCDIR}/../whisper.cpp/include -I${SRCDIR}/../whisper.cpp/ggml/include -I/usr/local/include
 #cgo LDFLAGS: ${SRCDIR}/../libs/libwhisper.a ${SRCDIR}/../libs/libggml.a ${SRCDIR}/../libs/libggml-base.a ${SRCDIR}/../libs/libggml-cpu.a -lstdc++ -lm
 #cgo linux LDFLAGS: -fopenmp
 #cgo darwin LDFLAGS: ${SRCDIR}/../libs/libggml-metal.a ${SRCDIR}/../libs/libggml-blas.a -framework Accelerate -framework Metal -framework Foundation -framework CoreGraphics
