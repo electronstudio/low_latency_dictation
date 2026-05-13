@@ -16,7 +16,9 @@ make clean
 ## Dependencies
 - **Go 1.24+**
 - **System-wide C headers:** `whisper.h`, `ggml*.h`, SDL2 headers
-- **System libs:** `libSDL2`, `libvulkan`, OpenMP (`-fopenmp`)
+- **System libs:** `libSDL2`, `libvulkan`
+- **Linux:** OpenMP (`-fopenmp`)
+- **macOS:** Accelerate / Metal frameworks (via `libggml-blas.a`, `libggml-metal.a`)
 - **Vendored static archives:** `libs/libwhisper.a`, `libs/libggml*.a`
 
 ## Architecture
