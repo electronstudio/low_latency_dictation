@@ -8,10 +8,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/user/dictation/audio"
-	"github.com/user/dictation/timestamp"
-	"github.com/user/dictation/transcribe"
-	"github.com/user/dictation/vad"
+	"github.com/electronstudio/low_latency_dictation/audio"
+	"github.com/electronstudio/low_latency_dictation/timestamp"
+	"github.com/electronstudio/low_latency_dictation/transcribe"
+	"github.com/electronstudio/low_latency_dictation/vad"
+	"github.com/gdamore/tcell/v2"
+
+	_ "github.com/gdamore/tcell/v2/encoding"
 )
 
 type whisperParams struct {
@@ -49,7 +52,31 @@ func (s Segment) String() string {
 		s.Text)
 }
 
-var debug = false
+func printToScreen(x, y int, style tcell.Style, text string) {
+	for i, r := range text {
+		screen.SetContent(x+i, y, r, nil, style)
+	}
+}
+
+func printStatus(status string) {
+	if screenHeight < 1 {
+		return
+	}
+	printToScreen(0, screenHeight-1, statusStyle, "["+status+"] (press any key to quit)")
+}
+
+func die(code int, format string, args ...interface{}) {
+	screen.Fini()
+	fmt.Fprintf(os.Stderr, format, args...)
+	os.Exit(code)
+}
+
+var (
+	debug        = false
+	screen       tcell.Screen
+	screenHeight int
+	statusStyle  tcell.Style = tcell.StyleDefault.Reverse(true)
+)
 
 func main() {
 	transcribe.BackendLoadAll()
@@ -96,17 +123,35 @@ func main() {
 		BeamSize:       params.beamSize,
 	}
 
+	// init tcell screen
+	tcell.SetEncodingFallback(tcell.EncodingFallbackASCII)
+	var err error
+	screen, err = tcell.NewScreen()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "main: failed to create tcell screen: %v\n", err)
+		os.Exit(1)
+	}
+	if err := screen.Init(); err != nil {
+		fmt.Fprintf(os.Stderr, "main: failed to init tcell screen: %v\n", err)
+		os.Exit(1)
+	}
+	defer screen.Fini()
+	screen.SetStyle(tcell.StyleDefault)
+	screen.Clear()
+	_, screenHeight = screen.Size()
+	//die(0, "FOO "+strconv.Itoa(screenHeight))
+	printStatus("LOADING")
+	screen.Show()
+
 	// init audio
 	mic := audio.NewAudioAsync(params.lengthMs)
 	if err := mic.Init(params.captureID, transcribe.WhisperSampleRate); err != nil {
-		fmt.Fprintf(os.Stderr, "main: audio.Init() failed: %v\n", err)
-		os.Exit(1)
+		die(1, "main: audio.Init() failed: %v\n", err)
 	}
 	defer mic.Close()
 
 	if err := mic.Resume(); err != nil {
-		fmt.Fprintf(os.Stderr, "main: audio.Resume() failed: %v\n", err)
-		os.Exit(1)
+		die(1, "main: audio.Resume() failed: %v\n", err)
 	}
 
 	// whisper init
@@ -116,25 +161,18 @@ func main() {
 	}
 	ctx, err := transcribe.InitFromFile(params.model, cp)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(2)
+		die(2, "error: %v\n", err)
 	}
 	defer ctx.Free()
 
-	//m := "models/ggml-large-v3-turbo-q8_0.bin"
 	m := "models/ggml-base.en.bin"
 	ctx2, err := transcribe.InitFromFile(m, cp)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(2)
+		die(2, "error: %v\n", err)
 	}
-
 	defer ctx2.Free()
 
 	nIter := 0
-
-	fmt.Println("[Start speaking]")
-	os.Stdout.Sync()
 
 	tStart := time.Now()
 	tLast := tStart
@@ -159,6 +197,23 @@ func main() {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}()
+
+	// Event polling goroutine for tcell (quit / resize)
+	go func() {
+		for isRunning {
+			ev := screen.PollEvent()
+			switch ev.(type) {
+			case *tcell.EventKey:
+				isRunning = false
+				return
+			}
+		}
+	}()
+
+	cursorY := screenHeight - 1 // draw from bottom up
+
+	printStatus("LISTENING")
+	screen.Show()
 
 mainloop:
 	for isRunning {
@@ -193,26 +248,18 @@ mainloop:
 		}
 
 		// run the inference
-
 		if err := ctx.Full(wparams, pcmf32New); err != nil {
-			fmt.Fprintf(os.Stderr, "main: failed to process audio: %v\n", err)
-			os.Exit(6)
+			die(6, "main: failed to process audio: %v\n", err)
 		}
 
 		transcriptionEnd := tLast.Sub(tStart).Milliseconds()
-		transcriptionStart := max(0, transcriptionEnd-int64(len(pcmf32New))*1000/int64(transcribe.WhisperSampleRate))
-
-		if debug {
-			fmt.Println()
-			fmt.Printf("### Transcription %d START | t0 = %d ms | t1 = %d ms\n", nIter, transcriptionStart, transcriptionEnd)
-			fmt.Println()
-		}
+		transcriptionStart := max(0, int(transcriptionEnd)-len(pcmf32New)*1000/transcribe.WhisperSampleRate)
 
 		nSegments := ctx.NSegments()
 		for i := 0; i < nSegments; i++ {
 			text := ctx.SegmentText(i)
-			t0 := ctx.SegmentT0(i) + transcriptionStart/10
-			t1 := ctx.SegmentT1(i) + transcriptionStart/10
+			t0 := ctx.SegmentT0(i) + int64(transcriptionStart)/10
+			t1 := ctx.SegmentT1(i) + int64(transcriptionStart)/10
 
 			seg := Segment{
 				Text:  text,
@@ -225,51 +272,57 @@ mainloop:
 					segments = segments[:j]
 					break
 				}
-				// if seg.Start > existing.Start && seg.End < existing.End && strings.HasPrefix(existing.Text, seg.Text) {
-				// 	segments = segments[:j]
-				// 	break
-				// }
 			}
 			if len(segments) == 0 || segments[len(segments)-1].End <= seg.Start {
 				segments = append(segments, seg)
 			}
-
-			// fmt.Println(seg.String())
-			// os.Stdout.Sync()
 		}
 
-		fmt.Print("\r\033[J")
-
+		// redraw all segments on screen
+		screen.Clear()
+		_, curH := screen.Size()
+		cursorY = curH - 1
 		for _, seg := range segments {
-			//fmt.Println(seg.String())
-			fmt.Print(seg.Text)
+			line := seg.Text
+			printToScreen(0, 0, tcell.StyleDefault, line)
+			cursorY--
+			if cursorY < 0 {
+				break
+			}
 		}
-		if debug {
-			fmt.Println()
-			fmt.Printf("### Transcription %d END\n", nIter)
-		}
+		// if debug {
+		// 	debugMsg := fmt.Sprintf("### Transcription %d START | t0 = %d ms | t1 = %d ms", nIter, transcriptionStart, transcriptionEnd)
+		// 	// print debug at top if room
+		// 	if cursorY > 0 {
+		// 		printToScreen(0, 0, tcell.StyleDefault, debugMsg)
+		// 	}
+		// }
+
+		printStatus("LISTENING")
+		screen.Show()
 		nIter++
-		os.Stdout.Sync()
 	}
 
 	mic.Pause()
-	//	fmt.Println("FINAL:")
 	fullAudio := mic.GetFullAudio()
 	if len(fullAudio) > 0 {
 		if err := ctx2.Full(wparams, fullAudio); err != nil {
-			fmt.Fprintf(os.Stderr, "main: failed to process audio: %v\n", err)
-			os.Exit(6)
+			die(6, "main: failed to process audio: %v\n", err)
 		}
 	}
 
-	fmt.Print("\r\033[J")
+	// final print
+	screen.Clear()
+	_, finalH := screen.Size()
+	cursorY = finalH - 1
 	nSegments := ctx2.NSegments()
 	for i := 0; i < nSegments; i++ {
 		text := ctx2.SegmentText(i)
-		fmt.Print(text)
-
+		printToScreen(0, cursorY, tcell.StyleDefault, text)
+		cursorY--
+		if cursorY < 0 {
+			break
+		}
 	}
-	fmt.Println()
-	os.Stdout.Sync()
-	//ctx.PrintTimings()
+
 }
