@@ -2,6 +2,7 @@ BINARY := dictate
 WHISPER_DIR := whisper.cpp
 WHISPER_BUILD := $(WHISPER_DIR)/build
 GGML_VULKAN ?= OFF
+CPU_COUNT := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
 WHISPER_LIBS := libs/libggml-base.a libs/libggml-cpu.a libs/libggml.a libs/libwhisper.a
 ifeq ($(GGML_VULKAN),ON)
 WHISPER_LIBS += libs/libggml-vulkan.a
@@ -25,7 +26,7 @@ whisper_libs:
 			-DCMAKE_BUILD_TYPE=Release \
 			-DGGML_VULKAN=$(GGML_VULKAN) \
 			-DBUILD_SHARED_LIBS=OFF; \
-		cmake --build $(WHISPER_BUILD) --parallel $$(nproc); \
+		cmake --build $(WHISPER_BUILD) --parallel $(CPU_COUNT); \
 		mkdir -p libs; \
 		cp $(WHISPER_BUILD)/src/libwhisper.a libs/; \
 		cp $(WHISPER_BUILD)/ggml/src/libggml.a libs/; \
