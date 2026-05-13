@@ -61,7 +61,7 @@ jobs:
           tar xvfz release-2.32.8.tar.gz
           mkdir build
           cd build
-          cmake ../SDL-release-2.32.8 -DSDL_SHARED=OFF -DSDL_STATIC=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_BUILD_TYPE=Release
+          cmake ../SDL-release-2.32.8 -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DSDL_SHARED=OFF -DSDL_STATIC=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_BUILD_TYPE=Release
           cmake --build . --config Release
           sudo cmake --install .
 
