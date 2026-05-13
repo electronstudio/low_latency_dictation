@@ -29,5 +29,6 @@ Packages under the module `github.com/user/dictation`:
 Requires a live microphone/audio input device.
 
 ## Models
-Model binaries live in `models/` and are not in version control.
-Default: `models/ggml-tiny.en-q8_0.bin` (hardcoded in `main.go`).
+Model binaries are cached in `~/.cache/low_latency_dictation/` and are not in version control.
+Default: `ggml-tiny.en-q8_0.bin` (hardcoded in `main.go`).
+If a model is missing it is automatically downloaded from `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/`.

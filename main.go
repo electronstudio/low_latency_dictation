@@ -66,7 +66,7 @@ func main() {
 		vadThold:  0.8,
 		freqThold: 100.0,
 		language:  "en",
-		model:     "models/ggml-tiny.en-q8_0.bin",
+		model:     "ggml-tiny.en-q8_0.bin",
 	}
 
 	wparams := transcribe.FullParams{
@@ -98,16 +98,29 @@ func main() {
 	}
 
 	cp := transcribe.ContextParams{UseGPU: true, FlashAttn: true}
-	ctx, err := transcribe.InitFromFile(params.model, cp)
+
+	ctxModelPath, err := resolveModelFile(params.model)
 	if err != nil {
-		die(2, "error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	ctx, err := transcribe.InitFromFile(ctxModelPath, cp)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
 	}
 	defer ctx.Free()
 
-	m := "models/ggml-base.en.bin"
-	ctx2, err := transcribe.InitFromFile(m, cp)
+	m := "ggml-base.en.bin"
+	ctx2ModelPath, err := resolveModelFile(m)
 	if err != nil {
-		die(2, "error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	ctx2, err := transcribe.InitFromFile(ctx2ModelPath, cp)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
 	}
 	defer ctx2.Free()
 
