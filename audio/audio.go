@@ -6,6 +6,7 @@ package audio
 #cgo linux LDFLAGS: -lSDL2
 #cgo darwin pkg-config: sdl2
 #cgo darwin LDFLAGS: -lSDL2
+#cgo windows CFLAGS: -I/ucrt64/include/SDL2 -D_REENTRANT
 #cgo windows LDFLAGS: -lmingw32 -mwindows -lSDL2main -lSDL2
 
 #include <SDL.h>
