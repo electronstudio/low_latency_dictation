@@ -4,7 +4,7 @@
 Single Go executable: real-time microphone speech-to-text using whisper.cpp (CGO) + SDL2 (CGO).
 
 ## Build
-Compile with `make`. Output binary: `dictation-go`.
+Compile with `make`. Output binary: `dictate`.
 
 ```bash
 make

@@ -1,14 +1,17 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/electronstudio/low_latency_dictation/audio"
 	"github.com/electronstudio/low_latency_dictation/transcribe"
 	"github.com/electronstudio/low_latency_dictation/vad"
@@ -272,9 +275,33 @@ mainloop:
 
 	screen.Fini()
 	nSegments := ctx2.NSegments()
+	var sb strings.Builder
 	for i := 0; i < nSegments; i++ {
-		fmt.Print(ctx2.SegmentText(i))
+		sb.WriteString(ctx2.SegmentText(i))
 	}
+	fmt.Print(sb.String())
+
+	// Method 1: atotto/clipboard
+	_ = clipboard.WriteAll(sb.String())
+
+	// Method 2: /dev/clipboard (WSL/Cygwin)
+	if f, err := os.OpenFile("/dev/clipboard", os.O_WRONLY|os.O_TRUNC, 0); err == nil {
+		_, _ = f.WriteString(sb.String())
+		_ = f.Close()
+	}
+
+	// Method 3: OSC 52 terminal escape sequence
+	data := base64.StdEncoding.EncodeToString([]byte(sb.String()))
+	var seq string
+	if os.Getenv("TMUX") != "" {
+		seq = fmt.Sprintf("\033Ptmux;\033\033]52;c;%s\007\033\\", data)
+	} else if strings.HasPrefix(os.Getenv("TERM"), "screen") {
+		seq = fmt.Sprintf("\033P\033]52;c;%s\007\033\\", data)
+	} else {
+		seq = fmt.Sprintf("\033]52;c;%s\007", data)
+	}
+	fmt.Print(seq)
+
 	os.Exit(0)
 }
 

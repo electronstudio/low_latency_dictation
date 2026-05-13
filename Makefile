@@ -1,4 +1,4 @@
-BINARY := dictation-go
+BINARY := dictate
 WHISPER_DIR := whisper.cpp
 WHISPER_BUILD := $(WHISPER_DIR)/build
 WHISPER_LIBS := libs/libggml-base.a libs/libggml-cpu.a libs/libggml-vulkan.a libs/libggml.a libs/libwhisper.a
