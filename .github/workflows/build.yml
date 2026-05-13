@@ -75,6 +75,41 @@ jobs:
           name: dictate-macos-arm64
           path: ./dictate
 
+  build-mac-x86_64:
+    runs-on: macos-15-inte
+    env:
+      MACOSX_DEPLOYMENT_TARGET: 10.15
+      CGO_LDFLAGS_ALLOW: ".*"
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "^1.24"
+
+      - name: Build SDL
+        run: |
+          wget https://github.com/libsdl-org/SDL/archive/refs/tags/release-2.32.8.tar.gz
+          tar xvfz release-2.32.8.tar.gz
+          mkdir build
+          cd build
+          cmake ../SDL-release-2.32.8 -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DSDL_SHARED=OFF -DSDL_STATIC=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build . --config Release
+          sudo cmake --install .
+
+      - name: Build
+        run: |
+          make GGML_VULKAN=OFF
+
+      - name: Upload jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: dictate-macos-x86_64
+          path: ./dictate
+
   build-windows:
     runs-on: windows-2022
 

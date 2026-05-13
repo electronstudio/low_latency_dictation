@@ -7,6 +7,11 @@ WHISPER_LIBS := libs/libggml-base.a libs/libggml-cpu.a libs/libggml.a libs/libwh
 ifeq ($(GGML_VULKAN),ON)
 WHISPER_LIBS += libs/libggml-vulkan.a
 GO_TAGS := -tags vulkan
+VULKAN_LDFLAGS := -lvulkan
+ifdef VULKAN_SDK
+VULKAN_SDK_MSYS := $(subst \,/ ,$(VULKAN_SDK))
+VULKAN_LDFLAGS := -L$(VULKAN_SDK_MSYS)/Lib -lvulkan-1
+endif
 endif
 ifeq ($(shell uname -s),Darwin)
 WHISPER_LIBS += libs/libggml-metal.a libs/libggml-blas.a
@@ -16,6 +21,7 @@ endif
 
 all: whisper_libs
 	CGO_CFLAGS="-I$(CURDIR)/$(WHISPER_DIR)/include -I$(CURDIR)/$(WHISPER_DIR)/ggml/include -I$(CURDIR)/$(WHISPER_DIR)/ggml/src" \
+	CGO_LDFLAGS="$(VULKAN_LDFLAGS)" \
 		go build -o $(BINARY) $(GO_TAGS) .
 
 whisper_libs:
