@@ -11,10 +11,7 @@ package audio
 #include <stdint.h>
 
 extern void goAudioCallback(uintptr_t handle, Uint8* stream, int len);
-
-static void sdlCallback(void* userdata, Uint8* stream, int len) {
-    goAudioCallback((uintptr_t)userdata, stream, len);
-}
+extern void sdlCallback(void* userdata, Uint8* stream, int len);
 
 static inline void setResampleHint(void) {
     SDL_SetHintWithPriority("SDL_AUDIO_RESAMPLING_MODE", "medium", SDL_HINT_OVERRIDE);
@@ -28,7 +25,6 @@ static inline SDL_bool eventIsQuit(SDL_Event* ev) {
     return ev->type == SDL_QUIT;
 }
 
-// Helper: Go cannot directly cast uintptr_t -> unsafe.Pointer, but C can.
 static inline void* uintptrToVoid(uintptr_t v) {
     return (void*)v;
 }
@@ -51,11 +47,11 @@ func goAudioCallback(handle C.uintptr_t, stream *C.Uint8, len C.int) {
 	if nSamples <= 0 {
 		return
 	}
-	// Make a copy because the SDL buffer may be reused after this callback returns.
+
 	samples := make([]float32, nSamples)
 	src := (*[1 << 30]float32)(unsafe.Pointer(stream))[:nSamples:nSamples]
 	copy(samples, src)
-	audioptr.Callback(samples)
+	audioptr.callback(samples)
 }
 
 // AudioAsync captures audio asynchronously via SDL into a circular buffer.
@@ -68,18 +64,16 @@ type AudioAsync struct {
 	running bool
 	mu      sync.Mutex
 
-	audio      []float32
-	audioPos   int
-	audioLen   int
-	full_audio []float32
+	audio     []float32
+	audioPos  int
+	audioLen  int
+	fullAudio []float32
 }
 
 // NewAudioAsync creates a new async audio capture instance that keeps lenMs
 // milliseconds of audio in its circular buffer.
 func NewAudioAsync(lenMs int) *AudioAsync {
-	return &AudioAsync{
-		lenMs: lenMs,
-	}
+	return &AudioAsync{lenMs: lenMs}
 }
 
 // Init initialises SDL audio capture with the requested sample rate.
@@ -94,10 +88,10 @@ func (a *AudioAsync) Init(captureID int, sampleRate int) error {
 	C.setResampleHint()
 
 	nDevices := int(C.SDL_GetNumAudioDevices(C.SDL_TRUE))
-	fmt.Fprintf(os.Stderr, "%s: found %d capture devices:\n", "audio.Init", nDevices)
+	fmt.Fprintf(os.Stderr, "audio.Init: found %d capture devices:\n", nDevices)
 	for i := 0; i < nDevices; i++ {
 		name := C.GoString(C.SDL_GetAudioDeviceName(C.int(i), C.SDL_TRUE))
-		fmt.Fprintf(os.Stderr, "%s:    - Capture device #%d: '%s'\n", "audio.Init", i, name)
+		fmt.Fprintf(os.Stderr, "audio.Init:    - Capture device #%d: '%s'\n", i, name)
 	}
 
 	var req, obt C.SDL_AudioSpec
@@ -115,10 +109,10 @@ func (a *AudioAsync) Init(captureID int, sampleRate int) error {
 
 	if captureID >= 0 {
 		name := C.SDL_GetAudioDeviceName(C.int(captureID), C.SDL_TRUE)
-		fmt.Fprintf(os.Stderr, "%s: attempt to open capture device %d : '%s' ...\n", "audio.Init", captureID, C.GoString(name))
+		fmt.Fprintf(os.Stderr, "audio.Init: attempt to open capture device %d : '%s' ...\n", captureID, C.GoString(name))
 		a.devID = C.SDL_OpenAudioDevice(name, C.SDL_TRUE, &req, &obt, 0)
 	} else {
-		fmt.Fprintf(os.Stderr, "%s: attempt to open default capture device ...\n", "audio.Init")
+		fmt.Fprintf(os.Stderr, "audio.Init: attempt to open default capture device ...\n")
 		a.devID = C.SDL_OpenAudioDevice(nil, C.SDL_TRUE, &req, &obt, 0)
 	}
 
@@ -126,18 +120,18 @@ func (a *AudioAsync) Init(captureID int, sampleRate int) error {
 		return fmt.Errorf("couldn't open an audio device for capture: %s", C.GoString(C.SDL_GetError()))
 	}
 
-	fmt.Fprintf(os.Stderr, "%s: obtained spec for input device (SDL Id = %d):\n", "audio.Init", a.devID)
-	fmt.Fprintf(os.Stderr, "%s:     - sample rate:       %d\n", "audio.Init", obt.freq)
-	fmt.Fprintf(os.Stderr, "%s:     - format:            %d (required: %d)\n", "audio.Init", obt.format, req.format)
-	fmt.Fprintf(os.Stderr, "%s:     - channels:          %d (required: %d)\n", "audio.Init", obt.channels, req.channels)
-	fmt.Fprintf(os.Stderr, "%s:     - samples per frame: %d\n", "audio.Init", obt.samples)
+	fmt.Fprintf(os.Stderr, "audio.Init: obtained spec for input device (SDL Id = %d):\n", a.devID)
+	fmt.Fprintf(os.Stderr, "audio.Init:     - sample rate:       %d\n", obt.freq)
+	fmt.Fprintf(os.Stderr, "audio.Init:     - format:            %d (required: %d)\n", obt.format, req.format)
+	fmt.Fprintf(os.Stderr, "audio.Init:     - channels:          %d (required: %d)\n", obt.channels, req.channels)
+	fmt.Fprintf(os.Stderr, "audio.Init:     - samples per frame: %d\n", obt.samples)
 
 	a.sampleRate = int(obt.freq)
 	bufSize := (a.sampleRate * a.lenMs) / 1000
 	a.audio = make([]float32, bufSize)
 	a.audioPos = 0
 	a.audioLen = 0
-	a.full_audio = make([]float32, 0, bufSize)
+	a.fullAudio = make([]float32, 0, bufSize)
 	return nil
 }
 
@@ -167,22 +161,6 @@ func (a *AudioAsync) Pause() error {
 	return nil
 }
 
-// Clear resets the internal circular buffer.
-func (a *AudioAsync) Clear() error {
-	if a.devID == 0 {
-		return fmt.Errorf("no audio device to clear")
-	}
-	if !a.running {
-		return fmt.Errorf("not running")
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.audioPos = 0
-	a.audioLen = 0
-	a.full_audio = a.full_audio[:0]
-	return nil
-}
-
 // Close releases the SDL audio device and cleans up the cgo.Handle.
 func (a *AudioAsync) Close() {
 	if a.devID != 0 {
@@ -195,9 +173,9 @@ func (a *AudioAsync) Close() {
 	}
 }
 
-// Callback is called by the SDL audio thread.  It copies samples into the
+// callback is called by the SDL audio thread. It copies samples into the
 // circular buffer.
-func (a *AudioAsync) Callback(samples []float32) {
+func (a *AudioAsync) callback(samples []float32) {
 	if !a.running {
 		return
 	}
@@ -205,7 +183,7 @@ func (a *AudioAsync) Callback(samples []float32) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.full_audio = append(a.full_audio, samples...)
+	a.fullAudio = append(a.fullAudio, samples...)
 
 	nSamples := len(samples)
 	if nSamples > len(a.audio) {
@@ -230,11 +208,11 @@ func (a *AudioAsync) Callback(samples []float32) {
 // If ms <= 0 it returns up to lenMs milliseconds.
 func (a *AudioAsync) Get(ms int) []float32 {
 	if a.devID == 0 {
-		fmt.Fprintf(os.Stderr, "%s: no audio device to get audio from!\n", "audio.Get")
+		fmt.Fprintf(os.Stderr, "audio.Get: no audio device to get audio from!\n")
 		return nil
 	}
 	if !a.running {
-		fmt.Fprintf(os.Stderr, "%s: not running!\n", "audio.Get")
+		fmt.Fprintf(os.Stderr, "audio.Get: not running!\n")
 		return nil
 	}
 
@@ -272,7 +250,7 @@ func (a *AudioAsync) SampleRate() int { return a.sampleRate }
 func (a *AudioAsync) GetFullAudio() []float32 {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.full_audio
+	return a.fullAudio
 }
 
 // PollEvents returns false if the user requested quit (window close, etc.).

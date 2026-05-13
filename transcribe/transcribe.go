@@ -36,15 +36,6 @@ type ContextParams struct {
 	FlashAttn bool
 }
 
-// DefaultContextParams returns the default context parameters.
-func DefaultContextParams() ContextParams {
-	cp := C.whisper_context_default_params()
-	return ContextParams{
-		UseGPU:    bool(cp.use_gpu),
-		FlashAttn: bool(cp.flash_attn),
-	}
-}
-
 // InitFromFile loads a model and returns a Context.
 func InitFromFile(modelPath string, params ContextParams) (*Context, error) {
 	cparams := C.whisper_context_default_params()
@@ -72,11 +63,6 @@ func (c *Context) Free() {
 		C.whisper_free(c.ctx)
 		c.ctx = nil
 	}
-}
-
-// PrintTimings prints performance timing information to stderr.
-func (c *Context) PrintTimings() {
-	C.whisper_print_timings(c.ctx)
 }
 
 // FullParams holds parameters for a single transcription run.
@@ -173,9 +159,4 @@ func (c *Context) SegmentT0(i int) int64 {
 // SegmentT1 returns the end timestamp of segment i.
 func (c *Context) SegmentT1(i int) int64 {
 	return int64(C.whisper_full_get_segment_t1(c.ctx, C.int(i)))
-}
-
-// SegmentSpeakerTurnNext returns true if the next segment is a speaker turn.
-func (c *Context) SegmentSpeakerTurnNext(i int) bool {
-	return bool(C.whisper_full_get_segment_speaker_turn_next(c.ctx, C.int(i)))
 }
