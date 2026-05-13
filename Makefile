@@ -15,7 +15,7 @@ endif
 .PHONY: all clean whisper_libs
 
 all: whisper_libs
-	CGO_CFLAGS="-I$(CURDIR)/$(WHISPER_DIR)/include -I$(CURDIR)/$(WHISPER_DIR)/ggml/include" \
+	CGO_CFLAGS="-I$(CURDIR)/$(WHISPER_DIR)/include -I$(CURDIR)/$(WHISPER_DIR)/ggml/include -I$(CURDIR)/$(WHISPER_DIR)/ggml/src" \
 		go build -o $(BINARY) $(GO_TAGS) .
 
 whisper_libs:
