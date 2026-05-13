@@ -1,0 +1,38 @@
+name: Build
+
+# Controls when the workflow will run
+on:
+  push:
+  pull_request:
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    container:
+      image: electronstudio/ubuntu16-modern:latest
+      options: --user root
+      volumes:
+        # override /__e/node20 because GitHub Actions uses a version that requires too-recent glibc
+        - /tmp:/__e/node20
+
+    steps:
+      - name: fix node
+        run: |
+          ln -s /usr/local/bin /__e/node20/bin
+
+      - uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+      - name: Build
+        run: |
+          make
+
+      - name: Upload jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: dictate-linux-x86_64
+          path: ./dictate
