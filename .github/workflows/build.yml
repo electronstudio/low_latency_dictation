@@ -76,7 +76,7 @@ jobs:
   build-mac-x86_64:
     runs-on: macos-15-intel
     env:
-      MACOSX_DEPLOYMENT_TARGET: 10.15
+      MACOSX_DEPLOYMENT_TARGET: 10.14
       CGO_LDFLAGS_ALLOW: ".*"
 
     steps:
