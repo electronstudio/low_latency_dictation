@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"runtime"
@@ -20,20 +21,35 @@ import (
 )
 
 type CLI struct {
-	Model      string  `arg:"-m,--model"       default:"ggml-tiny.en-q8_0.bin" help:"Model for real-time transcription"`
-	FinalModel string  `arg:"-f,--final-model" default:"ggml-base.en.bin"      help:"Model for final transcription"`
+	Model      string  `arg:"-m,--model"       default:"ggml-tiny.en-q8_0.bin" help:"Model for real-time transcription, e.g. ggml-medium-q5_0.bin "`
+	FinalModel string  `arg:"-f,--final-model" default:"ggml-base.en.bin"      help:"Model for final transcription, e.g ggml-large-v3-turbo-q5_0.bin"`
 	Threads    int     `arg:"-t,--threads"     default:"0"                     help:"Threads (0=auto)"`
-	UseCPU     bool    `arg:"--use-cpu"        default:"true"                  help:"Disable GPU accleration"`
+	UseCPU     bool    `arg:"--use-cpu"        default:"false"                  help:"Disable GPU accleration"`
 	CaptureID  int     `arg:"-a,--audio-device"     default:"-1"               help:"Audio device ID"`
 	LengthMs   int     `arg:"-l,--length"      default:"30000"                 help:"(ADVANCED: Buffer length in ms)"`
-	KeepMs     int     `arg:"-k,--keep"        default:"200"                   help:"(ADVANCED: Keep from previous chunk (ms))"`
 	MaxTokens  int     `arg:"--max-tokens"     default:"32"                    help:"(ADVANCED: Max tokens per segment)"`
 	AudioCtx   int     `arg:"--audio-ctx"      default:"0"                     help:"(ADVANCED: Audio context size)"`
 	VadThold   float32 `arg:"--vad-thold"      default:"0.8"                   help:"(ADVANCED: VAD threshold)"`
 	FreqThold  float32 `arg:"--freq-thold"     default:"100.0"                 help:"(ADVANCED: High-pass filter cutoff)"`
 	Language   string  `arg:"--lang"           default:"en"                    help:"(ADVANCED: Language code)"`
 	FlashAttn  bool    `arg:"--flash-attn"     default:"true"                  help:"(ADVANCED: Use flash attention)"`
+	LogFile    string  `arg:"--log-file"       default:""                      help:"Path to log file for actions"`
 }
+
+// TODO: remove LEngthMS?
+// Add final threads and final use cpu
+// display final segment even it overlapped and couldnt be added, because missing end words is annoying
+// do whole buffer rather than circular buffer, or at least larger circle
+// option to adjust interval
+// option to disable VAD
+// recommended options for high, low systems
+// escape to delete, escape again to quit. C to copy.  enter to exit and copy.
+// colors?
+// word timings?
+// better models?
+// resident daemon?
+// split front and backend.  network?
+// suggested improvements, concurrency bug,
 
 func (CLI) Version() string {
 	return "low_latency_dictation 0.1.0"
@@ -42,7 +58,6 @@ func (CLI) Version() string {
 type whisperParams struct {
 	nThreads  int
 	lengthMs  int
-	keepMs    int
 	captureID int
 	maxTokens int
 	audioCtx  int
@@ -115,7 +130,14 @@ var (
 	screenWidth  int
 	screenHeight int
 	statusStyle  = tcell.StyleDefault.Reverse(true)
+	logger       *log.Logger
 )
+
+func logActionf(format string, args ...interface{}) {
+	if logger != nil {
+		logger.Printf(format, args...)
+	}
+}
 
 func main() {
 	transcribe.BackendLoadAll()
@@ -123,9 +145,24 @@ func main() {
 	var cli CLI
 	arg.MustParse(&cli)
 
+	if cli.LogFile != "" {
+		f, err := os.OpenFile(cli.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: failed to open log file: %v\n", err)
+			os.Exit(1)
+		}
+		defer f.Close()
+		logger = log.New(f, "", log.LstdFlags)
+	}
+
+	logActionf("=== startup ===")
+	logActionf("model=%s final_model=%s threads=%d use_cpu=%v audio_device=%d length_ms=%d max_tokens=%d audio_ctx=%d vad_thold=%.2f freq_thold=%.1f lang=%s flash_attn=%v",
+		cli.Model, cli.FinalModel, cli.Threads, cli.UseCPU, cli.CaptureID, cli.LengthMs,
+		cli.MaxTokens, cli.AudioCtx, cli.VadThold, cli.FreqThold,
+		cli.Language, cli.FlashAttn)
+
 	params := whisperParams{
 		lengthMs:  cli.LengthMs,
-		keepMs:    cli.KeepMs,
 		captureID: cli.CaptureID,
 		maxTokens: cli.MaxTokens,
 		audioCtx:  cli.AudioCtx,
@@ -165,39 +202,49 @@ func main() {
 
 	mic := audio.NewAudioAsync(params.lengthMs)
 	if err := mic.Init(params.captureID, transcribe.WhisperSampleRate); err != nil {
+		logActionf("audio init failed: %v", err)
 		die(1, "main: audio.Init() failed: %v\n", err)
 	}
 	defer mic.Close()
+	logActionf("audio init ok device=%d", params.captureID)
 
 	if err := mic.Resume(); err != nil {
+		logActionf("audio resume failed: %v", err)
 		die(1, "main: audio.Resume() failed: %v\n", err)
 	}
+	logActionf("audio resume ok")
 
 	cp := transcribe.ContextParams{UseGPU: !cli.UseCPU, FlashAttn: cli.FlashAttn}
 
 	ctxModelPath, err := resolveModelFile(params.model)
 	if err != nil {
+		logActionf("model load failed: %v", err)
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 	ctx, err := transcribe.InitFromFile(ctxModelPath, cp)
 	if err != nil {
+		logActionf("context init failed: %v", err)
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 	defer ctx.Free()
+	logActionf("context init ok model=%s", ctxModelPath)
 
 	ctx2ModelPath, err := resolveModelFile(cli.FinalModel)
 	if err != nil {
+		logActionf("final model load failed: %v", err)
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 	ctx2, err := transcribe.InitFromFile(ctx2ModelPath, cp)
 	if err != nil {
+		logActionf("final context init failed: %v", err)
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 	defer ctx2.Free()
+	logActionf("final context init ok model=%s", ctx2ModelPath)
 
 	tStart := time.Now()
 	tLast := tStart
@@ -273,11 +320,13 @@ mainloop:
 		if !vad.SimpleVAD(ls, transcribe.WhisperSampleRate, 250, params.vadThold, params.freqThold, false) {
 			printStatus("SLEEP")
 			screen.Show()
+			//logActionf("status= sleep")
 			time.Sleep(16 * time.Millisecond)
 			continue
 		}
 		printStatus("NOT SLEEP")
 		screen.Show()
+		logActionf("vad activated")
 		pcmf32New := mic.Get(params.lengthMs)
 		tLast = tNow
 
@@ -304,14 +353,17 @@ mainloop:
 				Start: t0,
 				End:   t1,
 			}
+			logActionf("segment t0=%d t1=%d text=%q", t0, t1, text)
 
 			for j, existing := range segments {
 				if existing.Start >= seg.Start-100 && existing.Start <= seg.Start+100 {
+					logActionf("truncating segments to %d becase of %q", j, seg.Text)
 					segments = segments[:j]
 					break
 				}
 			}
 			if len(segments) == 0 || segments[len(segments)-1].End <= seg.Start {
+				logActionf("appending segment %q", seg.Text)
 				segments = append(segments, seg)
 			}
 		}
@@ -319,10 +371,10 @@ mainloop:
 		// redraw all segments on screen
 		screen.Clear()
 		var sb strings.Builder
-		for i := 0; i < nSegments; i++ {
-			sb.WriteString(ctx.SegmentText(i))
+		for _, segment := range segments {
+			sb.WriteString(segment.Text)
 		}
-		printWrapped(0, 0, screenWidth, screenHeight-1, tcell.StyleDefault, sb.String())
+		printWrapped(0, 0, screenWidth, screenHeight-1, tcell.StyleDefault, strings.TrimSpace(sb.String()))
 
 		printStatus("LISTENING")
 		screen.Show()
@@ -345,19 +397,21 @@ mainloop:
 	for i := 0; i < nSegments; i++ {
 		sb.WriteString(ctx2.SegmentText(i))
 	}
-	fmt.Print(sb.String())
+	finalText := strings.TrimSpace(sb.String())
+	logActionf("final transcription n_segments=%d text=%q", nSegments, finalText)
+	fmt.Print(finalText)
 
 	// Method 1: atotto/clipboard
-	_ = clipboard.WriteAll(sb.String())
+	_ = clipboard.WriteAll(finalText)
 
 	// Method 2: /dev/clipboard (WSL/Cygwin)
 	if f, err := os.OpenFile("/dev/clipboard", os.O_WRONLY|os.O_TRUNC, 0); err == nil {
-		_, _ = f.WriteString(sb.String())
+		_, _ = f.WriteString(finalText)
 		_ = f.Close()
 	}
 
 	// Method 3: OSC 52 terminal escape sequence
-	data := base64.StdEncoding.EncodeToString([]byte(sb.String()))
+	data := base64.StdEncoding.EncodeToString([]byte(finalText))
 	var seq string
 	if os.Getenv("TMUX") != "" {
 		seq = fmt.Sprintf("\033Ptmux;\033\033]52;c;%s\007\033\\", data)
