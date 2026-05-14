@@ -11,12 +11,33 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/alexflint/go-arg"
 	"github.com/atotto/clipboard"
 	"github.com/electronstudio/low_latency_dictation/audio"
 	"github.com/electronstudio/low_latency_dictation/transcribe"
 	"github.com/electronstudio/low_latency_dictation/vad"
 	"github.com/gdamore/tcell/v2"
 )
+
+type CLI struct {
+	Model      string  `arg:"-m,--model"       default:"ggml-tiny.en-q8_0.bin" help:"Model for real-time transcription"`
+	FinalModel string  `arg:"-f,--final-model" default:"ggml-base.en.bin"      help:"Model for final transcription"`
+	Threads    int     `arg:"-t,--threads"     default:"0"                     help:"Threads (0=auto)"`
+	UseCPU     bool    `arg:"--use-cpu"        default:"true"                  help:"Disable GPU accleration"`
+	CaptureID  int     `arg:"-a,--audio-device"     default:"-1"               help:"Audio device ID"`
+	LengthMs   int     `arg:"-l,--length"      default:"30000"                 help:"(ADVANCED: Buffer length in ms)"`
+	KeepMs     int     `arg:"-k,--keep"        default:"200"                   help:"(ADVANCED: Keep from previous chunk (ms))"`
+	MaxTokens  int     `arg:"--max-tokens"     default:"32"                    help:"(ADVANCED: Max tokens per segment)"`
+	AudioCtx   int     `arg:"--audio-ctx"      default:"0"                     help:"(ADVANCED: Audio context size)"`
+	VadThold   float32 `arg:"--vad-thold"      default:"0.8"                   help:"(ADVANCED: VAD threshold)"`
+	FreqThold  float32 `arg:"--freq-thold"     default:"100.0"                 help:"(ADVANCED: High-pass filter cutoff)"`
+	Language   string  `arg:"--lang"           default:"en"                    help:"(ADVANCED: Language code)"`
+	FlashAttn  bool    `arg:"--flash-attn"     default:"true"                  help:"(ADVANCED: Use flash attention)"`
+}
+
+func (CLI) Version() string {
+	return "low_latency_dictation 0.1.0"
+}
 
 type whisperParams struct {
 	nThreads  int
@@ -99,17 +120,29 @@ var (
 func main() {
 	transcribe.BackendLoadAll()
 
+	var cli CLI
+	arg.MustParse(&cli)
+
 	params := whisperParams{
-		nThreads:  min(1, runtime.NumCPU()),
-		lengthMs:  30000,
-		keepMs:    200,
-		captureID: -1,
-		maxTokens: 32,
-		audioCtx:  0,
-		vadThold:  0.8,
-		freqThold: 100.0,
-		language:  "en",
-		model:     "ggml-tiny.en-q8_0.bin",
+		lengthMs:  cli.LengthMs,
+		keepMs:    cli.KeepMs,
+		captureID: cli.CaptureID,
+		maxTokens: cli.MaxTokens,
+		audioCtx:  cli.AudioCtx,
+		vadThold:  cli.VadThold,
+		freqThold: cli.FreqThold,
+		language:  cli.Language,
+		model:     cli.Model,
+	}
+
+	if cli.Threads == 0 {
+		if cli.UseCPU {
+			params.nThreads = runtime.NumCPU()
+		} else {
+			params.nThreads = 1
+		}
+	} else {
+		params.nThreads = cli.Threads
 	}
 
 	wparams := transcribe.FullParams{
@@ -140,7 +173,7 @@ func main() {
 		die(1, "main: audio.Resume() failed: %v\n", err)
 	}
 
-	cp := transcribe.ContextParams{UseGPU: true, FlashAttn: true}
+	cp := transcribe.ContextParams{UseGPU: !cli.UseCPU, FlashAttn: cli.FlashAttn}
 
 	ctxModelPath, err := resolveModelFile(params.model)
 	if err != nil {
@@ -154,8 +187,7 @@ func main() {
 	}
 	defer ctx.Free()
 
-	m := "ggml-base.en.bin"
-	ctx2ModelPath, err := resolveModelFile(m)
+	ctx2ModelPath, err := resolveModelFile(cli.FinalModel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -232,20 +264,21 @@ mainloop:
 		tNow := time.Now()
 		tDiff := tNow.Sub(tLast).Milliseconds()
 
-		if tDiff < 200 {
+		if tDiff < 100 {
 			time.Sleep(16 * time.Millisecond)
 			continue
 		}
+		ls := mic.Get(500)
 
-		pcmf32New := mic.Get(500)
-
-		// SimpleVAD returns true when SILENCE is detected (i.e. speech stopped).
-		if !vad.SimpleVAD(pcmf32New, transcribe.WhisperSampleRate, 250, params.vadThold, params.freqThold, false) {
-			pcmf32New = mic.Get(params.lengthMs)
-		} else {
+		if !vad.SimpleVAD(ls, transcribe.WhisperSampleRate, 250, params.vadThold, params.freqThold, false) {
+			printStatus("SLEEP")
+			screen.Show()
 			time.Sleep(16 * time.Millisecond)
 			continue
 		}
+		printStatus("NOT SLEEP")
+		screen.Show()
+		pcmf32New := mic.Get(params.lengthMs)
 		tLast = tNow
 
 		if len(pcmf32New) == 0 {

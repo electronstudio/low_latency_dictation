@@ -50,5 +50,6 @@ Requires a live microphone/audio input device.
 
 ## Models
 Model binaries are cached in `~/.cache/low_latency_dictation/` and are not in version control.
-Default: `ggml-tiny.en-q8_0.bin` (hardcoded in `main.go`).
+Defaults: `--model ggml-tiny.en-q8_0.bin --final-model ggml-base.en.bin`.
 If a model is missing it is automatically downloaded from `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/`.
+See `--help` for all CLI options.
