@@ -11,7 +11,12 @@ make
 make clean
 ```
 
-**Windows (MSYS2/MinGW):** The Makefile automatically handles library naming differences produced by CMake on Windows (e.g. `whisper.lib` or `ggml.lib` instead of `libwhisper.a`).
+**Windows (MSYS2/MinGW):** The Makefile handles:
+- CMake library naming differences (`whisper.lib` vs `libwhisper.a`)
+- SDL2 include/library paths via `cygpath -m` (go toolchain invokes native `gcc.exe` which needs Windows-style paths)
+- Vulkan library name (`vulkan-1` instead of `vulkan`)
+
+The `pkg-config` directive is only used on Linux/macOS; on Windows paths and flags are computed in the Makefile.
 
 ## Dependencies
 - **Go 1.24+**

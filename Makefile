@@ -4,11 +4,13 @@ WHISPER_BUILD := $(WHISPER_DIR)/build
 GGML_VULKAN ?= OFF
 CPU_COUNT := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
 WHISPER_LIBS := libs/libggml-base.a libs/libggml-cpu.a libs/libggml.a libs/libwhisper.a
+
+# --- Platform detection (MSYS2 / MinGW / Cygwin / Linux / macOS) ---
+WINDOWY := $(findstring MINGW,$(shell uname -s))$(findstring MSYS,$(shell uname -s))$(findstring CYGWIN,$(shell uname -s))
+
 ifeq ($(GGML_VULKAN),ON)
 WHISPER_LIBS += libs/libggml-vulkan.a
 GO_TAGS := -tags vulkan
-# Detect Windows (MSYS2/MinGW/Cygwin) via uname so we link the right Vulkan lib
-WINDOWY := $(findstring MINGW,$(shell uname -s))$(findstring MSYS,$(shell uname -s))$(findstring CYGWIN,$(shell uname -s))
 # Default Vulkan link flags
 ifeq ($(WINDOWY),)
 VULKAN_LDFLAGS := -lvulkan
@@ -21,15 +23,26 @@ VULKAN_SDK_MSYS := $(shell cygpath -u "$(VULKAN_SDK)" 2>/dev/null || echo "$(VUL
 VULKAN_LDFLAGS := -L$(VULKAN_SDK_MSYS)/Lib -lvulkan-1
 endif
 endif
+
 ifeq ($(shell uname -s),Darwin)
 WHISPER_LIBS += libs/libggml-metal.a libs/libggml-blas.a
+endif
+
+# SDL2 flags per platform
+ifeq ($(WINDOWY),)
+SDL2_CFLAGS  :=
+SDL2_LDFLAGS := -lSDL2
+else
+# Use cygpath -m to emit paths that gcc.exe understands on Windows
+SDL2_CFLAGS  := -I$(shell cygpath -m /ucrt64/include/SDL2) -D_REENTRANT
+SDL2_LDFLAGS := -L$(shell cygpath -m /ucrt64/lib) -lmingw32 -mwindows -lSDL2main -lSDL2
 endif
 
 .PHONY: all clean whisper_libs
 
 all: whisper_libs
-	CGO_CFLAGS="-I$(CURDIR)/$(WHISPER_DIR)/include -I$(CURDIR)/$(WHISPER_DIR)/ggml/include -I$(CURDIR)/$(WHISPER_DIR)/ggml/src" \
-	CGO_LDFLAGS="$(VULKAN_LDFLAGS)" \
+	CGO_CFLAGS="$(SDL2_CFLAGS) -I$(CURDIR)/$(WHISPER_DIR)/include -I$(CURDIR)/$(WHISPER_DIR)/ggml/include -I$(CURDIR)/$(WHISPER_DIR)/ggml/src" \
+	CGO_LDFLAGS="$(SDL2_LDFLAGS) $(VULKAN_LDFLAGS)" \
 		go build -o $(BINARY) $(GO_TAGS) .
 
 whisper_libs:
