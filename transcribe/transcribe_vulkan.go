@@ -4,6 +4,6 @@
 package transcribe
 
 /*
-#cgo LDFLAGS: ${SRCDIR}/../libs/libggml-vulkan.a
+#cgo LDFLAGS: ${SRCDIR}/../libs/libggml-vulkan.a -lstdc++ -lm
 */
 import "C"
