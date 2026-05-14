@@ -4,19 +4,30 @@
 Single Go executable: real-time microphone speech-to-text using whisper.cpp (CGO) + SDL2 (CGO).
 
 ## Build
-Compile with `make`. Output binary: `dictate`.
+Compile with `make` using the platform-specific Makefile:
 
 ```bash
-make
-make clean
+make -f Makefile.linux     # Linux
+make -f Makefile.macos     # macOS
+make -f Makefile.windows   # Windows (MSYS2/MinGW)
 ```
 
-**Windows (MSYS2/MinGW):** The Makefile handles:
-- CMake library naming differences (`whisper.lib` vs `libwhisper.a`)
-- SDL2 include/library paths via `cygpath -m` (go toolchain invokes native `gcc.exe` which needs Windows-style paths)
-- Vulkan library name (`vulkan-1` instead of `vulkan`)
+Output binary: `dictate`.
 
-The `pkg-config` directive is only used on Linux/macOS; on Windows paths and flags are computed in the Makefile.
+```bash
+make -f Makefile.linux
+```
+
+### Platform-specific notes
+
+**Linux:** OpenMP is enabled via `-fopenmp`. No `pkg-config` directives required.
+
+**macOS:** Metal and Accelerate frameworks are enabled via `-DGGML_METAL=ON -DGGML_BLAS=ON`.
+
+**Windows (MSYS2/MinGW):** `Makefile.windows` handles:
+- CMake library naming differences (`whisper.lib` vs `libwhisper.a`)
+- SDL2 include/library paths via `cygpath -m` (Go toolchain invokes native `gcc.exe`, which needs Windows-style paths)
+- Vulkan library name (`vulkan-1` instead of `vulkan`)
 
 ## Dependencies
 - **Go 1.24+**

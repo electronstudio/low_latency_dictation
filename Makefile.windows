@@ -1,49 +1,28 @@
-BINARY := dictate
+BINARY := dictate.exe
 WHISPER_DIR := whisper.cpp
 WHISPER_BUILD := $(WHISPER_DIR)/build
-GGML_VULKAN ?= OFF
-CPU_COUNT := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+CPU_COUNT := $(shell nproc 2>/dev/null || echo 1)
 WHISPER_LIBS := libs/libggml-base.a libs/libggml-cpu.a libs/libggml.a libs/libwhisper.a
 
-# --- Platform detection (MSYS2 / MinGW / Cygwin / Linux / macOS) ---
-WINDOWY := $(findstring MINGW,$(shell uname -s))$(findstring MSYS,$(shell uname -s))$(findstring CYGWIN,$(shell uname -s))
+GGML_VULKAN ?= ON
 
 ifeq ($(GGML_VULKAN),ON)
 WHISPER_LIBS += libs/libggml-vulkan.a
 GO_TAGS := -tags vulkan
-# Default Vulkan link flags
-ifeq ($(WINDOWY),)
-VULKAN_LDFLAGS := -lvulkan
-else
 VULKAN_LDFLAGS := -lvulkan-1
 endif
-# Allow override via VULKAN_SDK environment variable (common in CI / Windows Vulkan SDK)
-ifdef VULKAN_SDK
-VULKAN_SDK_MSYS := $(shell cygpath -u "$(VULKAN_SDK)" 2>/dev/null || echo "$(VULKAN_SDK)")
-VULKAN_LDFLAGS := -L$(VULKAN_SDK_MSYS)/Lib -lvulkan-1
-endif
-endif
 
-ifeq ($(shell uname -s),Darwin)
-WHISPER_LIBS += libs/libggml-metal.a libs/libggml-blas.a
-endif
-
-# SDL2 flags per platform
-ifeq ($(WINDOWY),)
-SDL2_CFLAGS  :=
-SDL2_LDFLAGS := -lSDL2
-else
 # Use cygpath -m to emit paths that gcc.exe understands on Windows
 SDL2_CFLAGS  := -I$(shell cygpath -m /ucrt64/include/SDL2) -D_REENTRANT
-SDL2_LDFLAGS := -L$(shell cygpath -m /ucrt64/lib) -lmingw32 -mwindows -lSDL2main -lSDL2
-endif
+SDL2_LDFLAGS := -L$(shell cygpath -m /ucrt64/lib) -lmingw32 -mwindows -lSDL2main -lSDL2 $(VULKAN_LDFLAGS)
+
+CGO_CFLAGS := $(SDL2_CFLAGS) -I$(CURDIR)/$(WHISPER_DIR)/include -I$(CURDIR)/$(WHISPER_DIR)/ggml/include -I$(CURDIR)/$(WHISPER_DIR)/ggml/src
+CGO_LDFLAGS := $(SDL2_LDFLAGS)
 
 .PHONY: all clean whisper_libs
 
 all: whisper_libs
-	CGO_CFLAGS="$(SDL2_CFLAGS) -I$(CURDIR)/$(WHISPER_DIR)/include -I$(CURDIR)/$(WHISPER_DIR)/ggml/include -I$(CURDIR)/$(WHISPER_DIR)/ggml/src" \
-	CGO_LDFLAGS="$(SDL2_LDFLAGS) $(VULKAN_LDFLAGS)" \
-		go build -o $(BINARY) $(GO_TAGS) .
+	CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" go build -o $(BINARY) $(GO_TAGS) .
 
 whisper_libs:
 	@missing=0; \
@@ -55,8 +34,7 @@ whisper_libs:
 		cmake -S $(WHISPER_DIR) -B $(WHISPER_BUILD) \
 			-DCMAKE_BUILD_TYPE=Release \
 			-DGGML_VULKAN=$(GGML_VULKAN) \
-			-DBUILD_SHARED_LIBS=OFF \
-			$(if $(filter Darwin,$(shell uname -s)),-DGGML_METAL=ON -DGGML_BLAS=ON); \
+			-DBUILD_SHARED_LIBS=OFF; \
 		cmake --build $(WHISPER_BUILD) --parallel $(CPU_COUNT); \
 		mkdir -p libs; \
 		cp $(WHISPER_BUILD)/src/libwhisper.a libs/ 2>/dev/null || cp $(WHISPER_BUILD)/src/whisper.lib libs/libwhisper.a; \
@@ -65,13 +43,9 @@ whisper_libs:
 		cp $(WHISPER_BUILD)/ggml/src/libggml-cpu.a libs/ 2>/dev/null || cp $(WHISPER_BUILD)/ggml/src/ggml-cpu.a libs/libggml-cpu.a 2>/dev/null || cp $(WHISPER_BUILD)/ggml/src/ggml-cpu.lib libs/libggml-cpu.a; \
 		if [ "$(GGML_VULKAN)" = "ON" ]; then \
 			cp $(WHISPER_BUILD)/ggml/src/ggml-vulkan/libggml-vulkan.a libs/ 2>/dev/null || cp $(WHISPER_BUILD)/ggml/src/ggml-vulkan/ggml-vulkan.a libs/libggml-vulkan.a 2>/dev/null || cp $(WHISPER_BUILD)/ggml/src/ggml-vulkan/ggml-vulkan.lib libs/libggml-vulkan.a; \
-		fi; \
-		if [ "$(shell uname -s)" = "Darwin" ]; then \
-			cp $(WHISPER_BUILD)/ggml/src/ggml-metal/libggml-metal.a libs/ 2>/dev/null || cp $(WHISPER_BUILD)/ggml/src/ggml-metal/ggml-metal.a libs/libggml-metal.a 2>/dev/null || cp $(WHISPER_BUILD)/ggml/src/ggml-metal/ggml-metal.lib libs/libggml-metal.a; \
-			cp $(WHISPER_BUILD)/ggml/src/ggml-blas/libggml-blas.a libs/ 2>/dev/null || cp $(WHISPER_BUILD)/ggml/src/ggml-blas/ggml-blas.a libs/libggml-blas.a 2>/dev/null || cp $(WHISPER_BUILD)/ggml/src/ggml-blas/ggml-blas.lib libs/libggml-blas.a; \
 		fi \
 	fi
 
 clean:
-	rm -f $(BINARY) $(BINARY).exe libs/*.a libs/*.lib
+	rm -f $(BINARY) $(BINARY) libs/*.a libs/*.lib
 	rm -rf $(WHISPER_BUILD)
