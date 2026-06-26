@@ -15,9 +15,11 @@ import (
 	"github.com/alexflint/go-arg"
 	"github.com/atotto/clipboard"
 	"github.com/electronstudio/low_latency_dictation/audio"
+	"github.com/electronstudio/low_latency_dictation/hotkey"
 	"github.com/electronstudio/low_latency_dictation/transcribe"
 	"github.com/electronstudio/low_latency_dictation/vad"
 	"github.com/gdamore/tcell/v2"
+	"golang.design/x/hotkey/mainthread"
 )
 
 type CLI struct {
@@ -34,6 +36,8 @@ type CLI struct {
 	Language   string  `arg:"--lang"           default:"en"                    help:"(ADVANCED: Language code)"`
 	FlashAttn  bool    `arg:"--flash-attn"     default:"true"                  help:"(ADVANCED: Use flash attention)"`
 	LogFile    string  `arg:"--log-file"       default:""                      help:"Path to log file for actions"`
+	HotkeyMods string  `arg:"--hotkey-mods"    default:"ctrl+shift"            help:"Modifiers for the global stop hotkey (ctrl/alt/shift/cmd|win|super, joined by +)"`
+	HotkeyKey  string  `arg:"--hotkey-key"     default:"d"                     help:"Key for the global stop hotkey (e.g. d, f1, space, escape)"`
 }
 
 // TODO: remove LEngthMS?
@@ -116,7 +120,7 @@ func printStatus(status string) {
 	if screenHeight < 1 {
 		return
 	}
-	s := "[" + status + "] (press any key to quit)"
+	s := "[" + status + "] (press " + hotkeyLabel + " to stop)"
 	if screenWidth > len(s) {
 		s += strings.Repeat(" ", screenWidth-len(s))
 	}
@@ -137,6 +141,11 @@ var (
 	screenHeight int
 	statusStyle  = tcell.StyleDefault.Reverse(true)
 	logger       *log.Logger
+
+	// hotkeyLabel is the human-readable stop key combo shown in the status
+	// line. Defaults to "any key" (the foreground terminal key) and is
+	// replaced by the registered global combo when registration succeeds.
+	hotkeyLabel = "any key"
 )
 
 func logActionf(format string, args ...interface{}) {
@@ -145,7 +154,17 @@ func logActionf(format string, args ...interface{}) {
 	}
 }
 
-func main() {
+// main runs the program body. On macOS, mainthread.Init hands the real main
+// thread to the NSApplication event loop (required by the global-hotkey
+// backend, which delivers events via a CGEventTap on the main run loop) and
+// runs run() in a goroutine. On Linux/Windows the hotkey backends manage
+// their own threads, so Init's main-thread dispatch loop sits idle; using the
+// same entry point on every platform keeps the code paths identical.
+func main() { mainthread.Init(run) }
+
+// run is the program body. It is invoked from a goroutine by main() on every
+// platform.
+func run() {
 	transcribe.BackendLoadAll()
 
 	var cli CLI
@@ -264,6 +283,28 @@ func main() {
 
 	var isRunning atomic.Bool
 	isRunning.Store(true)
+
+	// Register the global stop hotkey. On failure we warn and continue: the
+	// foreground terminal key (handled below) still stops the app, so this
+	// never regresses existing users who lack permissions or the platform
+	// support.
+	if hkMods, hkKey, perr := hotkey.ParseCombo(cli.HotkeyMods, cli.HotkeyKey); perr != nil {
+		fmt.Fprintf(os.Stderr, "warning: invalid --hotkey/--key (%q+%q): %v\n", cli.HotkeyMods, cli.HotkeyKey, perr)
+		fmt.Fprintf(os.Stderr, "warning: global hotkey disabled; stop with any terminal key instead.\n")
+		logActionf("hotkey parse failed: %v", perr)
+	} else if stopHK, rerr := hotkey.Register(hkMods, hkKey); rerr != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not register global hotkey %s+%s: %v\n", cli.HotkeyMods, cli.HotkeyKey, rerr)
+		fmt.Fprintf(os.Stderr, "warning: stop with any terminal key instead.\n")
+		logActionf("hotkey register failed: %v", rerr)
+	} else {
+		hotkeyLabel = stopHK.String()
+		logActionf("hotkey registered: %s", hotkeyLabel)
+		go func() {
+			<-stopHK.Keydown()
+			logActionf("hotkey triggered, stopping")
+			isRunning.Store(false)
+		}()
+	}
 
 	// Poll SDL events in a goroutine so the main loop can respond to both
 	// SDL quit events and OS signals.
