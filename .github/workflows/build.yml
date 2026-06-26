@@ -131,12 +131,21 @@ jobs:
             git
             mingw-w64-ucrt-x86_64-toolchain
             mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-SDL2
             mingw-w64-ucrt-x86_64-vulkan-loader
             mingw-w64-ucrt-x86_64-vulkan-headers
             mingw-w64-ucrt-x86_64-shaderc
             mingw-w64-ucrt-x86_64-spirv-headers
             mingw-w64-ucrt-x86_64-go
+
+      - name: Build SDL
+        shell: msys2 {0}
+        run: |
+          wget https://github.com/libsdl-org/SDL/archive/refs/tags/release-2.32.8.tar.gz
+          tar xvfz release-2.32.8.tar.gz
+          mkdir build && cd build
+          cmake ../SDL-release-2.32.8 -DCMAKE_BUILD_TYPE=Release -DSDL_SHARED=OFF -DSDL_STATIC=ON -DCMAKE_INSTALL_PREFIX=/ucrt64
+          cmake --build . --config Release --parallel
+          cmake --install .
 
       - name: Build
         shell: msys2 {0}

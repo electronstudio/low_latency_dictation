@@ -14,7 +14,7 @@ endif
 
 # Use cygpath -m to emit paths that gcc.exe understands on Windows
 SDL2_CFLAGS  := -I$(shell cygpath -m /ucrt64/include/SDL2) -D_REENTRANT
-SDL2_LDFLAGS := -L$(shell cygpath -m /ucrt64/lib) -lmingw32 -mwindows -lSDL2main -lSDL2 $(VULKAN_LDFLAGS)
+SDL2_LDFLAGS := -L$(shell cygpath -m /ucrt64/lib) -mwindows -Wl,-Bstatic -Wl,--start-group -lSDL2main -lSDL2 -lwinpthread -Wl,--end-group -Wl,-Bdynamic -lmingw32 -lsetupapi -lcfgmgr32 -lwinmm -limm32 -lole32 -loleaut32 -lversion -luuid -lgdi32 $(VULKAN_LDFLAGS)
 
 CGO_CFLAGS := $(SDL2_CFLAGS) -I$(CURDIR)/$(WHISPER_DIR)/include -I$(CURDIR)/$(WHISPER_DIR)/ggml/include -I$(CURDIR)/$(WHISPER_DIR)/ggml/src
 CGO_LDFLAGS := $(SDL2_LDFLAGS)
@@ -34,7 +34,8 @@ whisper_libs:
 		cmake -S $(WHISPER_DIR) -B $(WHISPER_BUILD) \
 			-DCMAKE_BUILD_TYPE=Release \
 			-DGGML_VULKAN=$(GGML_VULKAN) \
-			-DBUILD_SHARED_LIBS=OFF; \
+			-DBUILD_SHARED_LIBS=OFF \
+			-DGGML_STATIC=ON; \
 		cmake --build $(WHISPER_BUILD) --parallel $(CPU_COUNT); \
 		mkdir -p libs; \
 		cp $(WHISPER_BUILD)/src/libwhisper.a libs/ 2>/dev/null || cp $(WHISPER_BUILD)/src/whisper.lib libs/libwhisper.a; \
