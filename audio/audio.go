@@ -89,6 +89,9 @@ func (a *AudioAsync) Init(captureID int, sampleRate int) error {
 
 	nDevices := int(C.SDL_GetNumAudioDevices(C.SDL_TRUE))
 	fmt.Fprintf(os.Stderr, "audio.Init: found %d capture devices:\n", nDevices)
+	if nDevices == 0 {
+		return fmt.Errorf("YOU NEED A MICROPHONE BUT CAN'T FIND ONE\n")
+	}
 	for i := 0; i < nDevices; i++ {
 		name := C.GoString(C.SDL_GetAudioDeviceName(C.int(i), C.SDL_TRUE))
 		fmt.Fprintf(os.Stderr, "audio.Init:    - Capture device #%d: '%s'\n", i, name)

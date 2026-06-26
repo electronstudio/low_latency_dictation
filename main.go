@@ -120,7 +120,9 @@ func printStatus(status string) {
 }
 
 func die(code int, format string, args ...interface{}) {
-	screen.Fini()
+	if screen != nil {
+		screen.Fini()
+	}
 	fmt.Fprintf(os.Stderr, format, args...)
 	os.Exit(code)
 }
