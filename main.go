@@ -22,7 +22,7 @@ import (
 
 type CLI struct {
 	Model      string  `arg:"-m,--model"       default:"ggml-tiny.en-q8_0.bin" help:"Model for real-time transcription, e.g. ggml-medium-q5_0.bin "`
-	FinalModel string  `arg:"-f,--final-model" default:"ggml-base.en.bin"      help:"Model for final transcription, e.g ggml-large-v3-turbo-q5_0.bin"`
+	FinalModel string  `arg:"-f,--final-model" default:"ggml-base.en.bin"      help:"Model for finalization, e.g ggml-large-v3-turbo-q5_0.bin, none to disable"`
 	Threads    int     `arg:"-t,--threads"     default:"0"                     help:"Threads (0=auto)"`
 	UseCPU     bool    `arg:"--use-cpu"        default:"false"                  help:"Disable GPU accleration"`
 	CaptureID  int     `arg:"-a,--audio-device"     default:"-1"               help:"Audio device ID"`
@@ -116,7 +116,11 @@ func printStatus(status string) {
 	if screenHeight < 1 {
 		return
 	}
-	printToScreen(0, screenHeight-1, statusStyle, "["+status+"] (press any key to quit)")
+	s := "[" + status + "] (press any key to quit)"
+	if screenWidth > len(s) {
+		s += strings.Repeat(" ", screenWidth-len(s))
+	}
+	printToScreen(0, screenHeight-1, statusStyle, s)
 }
 
 func die(code int, format string, args ...interface{}) {
@@ -233,20 +237,24 @@ func main() {
 	defer ctx.Free()
 	logActionf("context init ok model=%s", ctxModelPath)
 
-	ctx2ModelPath, err := resolveModelFile(cli.FinalModel)
-	if err != nil {
-		logActionf("final model load failed: %v", err)
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+	var ctx2 *transcribe.Context
+
+	if cli.FinalModel != "none" {
+		ctx2ModelPath, err := resolveModelFile(cli.FinalModel)
+		if err != nil {
+			logActionf("final model load failed: %v", err)
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		ctx2, err = transcribe.InitFromFile(ctx2ModelPath, cp)
+		if err != nil {
+			logActionf("final context init failed: %v", err)
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		defer ctx2.Free()
+		logActionf("final context init ok model=%s", ctx2ModelPath)
 	}
-	ctx2, err := transcribe.InitFromFile(ctx2ModelPath, cp)
-	if err != nil {
-		logActionf("final context init failed: %v", err)
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	defer ctx2.Free()
-	logActionf("final context init ok model=%s", ctx2ModelPath)
 
 	tStart := time.Now()
 	tLast := tStart
@@ -359,7 +367,7 @@ mainloop:
 
 			for j, existing := range segments {
 				if existing.Start >= seg.Start-100 && existing.Start <= seg.Start+100 {
-					logActionf("truncating segments to %d becase of %q", j, seg.Text)
+					logActionf("truncating segments to %d because of %q", j, seg.Text)
 					segments = segments[:j]
 					break
 				}
@@ -386,21 +394,32 @@ mainloop:
 	screen.Show()
 
 	mic.Pause()
-	fullAudio := mic.GetFullAudio()
-	if len(fullAudio) > 0 {
-		if err := ctx2.Full(wparams, fullAudio); err != nil {
-			die(6, "main: failed to process audio: %v\n", err)
+	var finalText string
+	if ctx2 != nil {
+		fullAudio := mic.GetFullAudio()
+		if len(fullAudio) > 0 {
+			if err := ctx2.Full(wparams, fullAudio); err != nil {
+				die(6, "main: failed to process audio: %v\n", err)
+			}
 		}
-	}
 
-	screen.Fini()
-	nSegments := ctx2.NSegments()
-	var sb strings.Builder
-	for i := 0; i < nSegments; i++ {
-		sb.WriteString(ctx2.SegmentText(i))
+		screen.Fini()
+		nSegments := ctx2.NSegments()
+		var sb strings.Builder
+		for i := 0; i < nSegments; i++ {
+			sb.WriteString(ctx2.SegmentText(i))
+		}
+		finalText = strings.TrimSpace(sb.String())
+		logActionf("final transcription n_segments=%d text=%q", nSegments, finalText)
+	} else {
+		screen.Fini()
+		var sb strings.Builder
+		for _, segment := range segments {
+			sb.WriteString(segment.Text)
+		}
+		finalText = strings.TrimSpace(sb.String())
+		logActionf("final text from segments text=%q", finalText)
 	}
-	finalText := strings.TrimSpace(sb.String())
-	logActionf("final transcription n_segments=%d text=%q", nSegments, finalText)
 	fmt.Print(finalText)
 
 	// Method 1: atotto/clipboard

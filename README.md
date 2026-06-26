@@ -4,10 +4,14 @@ A small Go program that does real-time speech-to-text from your microphone. It u
 
 ## building
 
-You need Go, a C compiler, SDL2, and the whisper.cpp headers. Then just run:
+```bash
+git submodule update --init --recursive
+```
+
+You need Go, a C compiler, SDL2, and the Vulkan headers. Then just run:
 
 ```bash
-make
+make -f Makefile.linux
 ```
 
 This will build the vendored `whisper.cpp` libraries and produce a `dictate` binary.
