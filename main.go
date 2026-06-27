@@ -24,22 +24,23 @@ import (
 )
 
 type CLI struct {
-	Model      string  `arg:"-m,--model"       default:"ggml-tiny.en-q8_0.bin" help:"Model for real-time transcription, e.g. ggml-medium-q5_0.bin "`
-	FinalModel string  `arg:"-f,--final-model" default:"ggml-base.en.bin"      help:"Model for finalization, e.g ggml-large-v3-turbo-q5_0.bin, none to disable"`
-	Threads    int     `arg:"-t,--threads"     default:"0"                     help:"Threads (0=auto)"`
-	UseCPU     bool    `arg:"--use-cpu"        default:"false"                 help:"Disable GPU accleration"`
-	CaptureID  int     `arg:"-a,--audio-device"     default:"-1"               help:"Audio device ID"`
-	LengthMs   int     `arg:"-l,--length"      default:"30000"                 help:"(ADVANCED: Buffer length in ms)"`
-	MaxTokens  int     `arg:"--max-tokens"     default:"32"                    help:"(ADVANCED: Max tokens per segment)"`
-	AudioCtx   int     `arg:"--audio-ctx"      default:"0"                     help:"(ADVANCED: Audio context size)"`
-	VadThold   float32 `arg:"--vad-thold"      default:"0.8"                   help:"(ADVANCED: VAD threshold)"`
-	FreqThold  float32 `arg:"--freq-thold"     default:"100.0"                 help:"(ADVANCED: High-pass filter cutoff)"`
-	Language   string  `arg:"--lang"           default:"en"                    help:"(ADVANCED: Language code)"`
-	FlashAttn  bool    `arg:"--flash-attn"     default:"true"                  help:"(ADVANCED: Use flash attention)"`
-	LogFile    string  `arg:"--log-file"       default:""                      help:"Path to log file for actions"`
-	LogLevel   string  `arg:"--log-level"      default:"warn"                  help:"whisper.cpp console log level (debug/info/warn/error/none)"`
-	HotkeyMods string  `arg:"--hotkey-mods"    default:"ctrl+shift"            help:"Modifiers for the global stop hotkey (ctrl/alt/shift/cmd|win|super, joined by +)"`
-	HotkeyKey  string  `arg:"--hotkey-key"     default:"d"                     help:"Key for the global stop hotkey (e.g. d, f1, space, escape)"`
+	Model         string  `arg:"-m,--model"       default:"ggml-tiny.en-q8_0.bin" help:"Model for real-time transcription, e.g. ggml-medium-q5_0.bin "`
+	FinalModel    string  `arg:"-f,--final-model" default:"ggml-base.en.bin"      help:"Model for finalization, e.g ggml-large-v3-turbo-q5_0.bin, none to disable"`
+	Threads       int     `arg:"-t,--threads"     default:"0"                     help:"Threads (0=auto)"`
+	UseCPU        bool    `arg:"--use-cpu"        default:"false"                 help:"Disable GPU accleration"`
+	CaptureID     int     `arg:"-a,--audio-device"     default:"-1"               help:"Audio device ID"`
+	LengthMs      int     `arg:"-l,--length"      default:"30000"                 help:"(ADVANCED: Buffer length in ms)"`
+	MaxTokens     int     `arg:"--max-tokens"     default:"32"                    help:"(ADVANCED: Max tokens per segment)"`
+	AudioCtx      int     `arg:"--audio-ctx"      default:"0"                     help:"(ADVANCED: Audio context size)"`
+	VadThold      float32 `arg:"--vad-thold"      default:"0.8"                   help:"(ADVANCED: VAD threshold)"`
+	FreqThold     float32 `arg:"--freq-thold"     default:"100.0"                 help:"(ADVANCED: High-pass filter cutoff)"`
+	Language      string  `arg:"--lang"           default:"en"                    help:"(ADVANCED: Language code)"`
+	FlashAttn     bool    `arg:"--flash-attn"     default:"true"                  help:"(ADVANCED: Use flash attention)"`
+	LogFile       string  `arg:"--log-file"       default:""                      help:"Path to log file for actions"`
+	LogLevel      string  `arg:"--log-level"      default:"warn"                  help:"whisper.cpp console log level (debug/info/warn/error/none)"`
+	HotkeyMods    string  `arg:"--hotkey-mods"      default:"ctrl+shift" help:"Modifiers for the global hotkey (ctrl/alt/shift/cmd|win|super, joined by +)"`
+	HotkeyKey     string  `arg:"--hotkey-key"       default:"d"          help:"Key for the global hotkey (e.g. d, f1, space, escape)"`
+	SkipPauseMode bool    `arg:"--skip-pause-mode"  default:"false"       help:"Start in LISTENING and return to LISTENING after finalizing instead of PAUSED; 'p' can still pause"`
 }
 
 // TODO: remove LEngthMS?
@@ -71,6 +72,46 @@ type whisperParams struct {
 	freqThold float32
 	language  string
 	model     string
+}
+
+// appState is the high-level mode of the main loop. It governs whether the
+// microphone is captured and whether VAD/whisper run. The state is owned by
+// runMainLoop; the separate isRunning atomic signals a quit request.
+type appState int
+
+const (
+	// StatePaused ignores audio: the microphone is paused and the loop waits
+	// for an unpause (hotkey or 'p') or a quit. Entered at startup (unless
+	// --skip-pause-mode), after finalizing (by default), and when the user
+	// presses 'p' mid-session. The current session's accumulated audio and
+	// segments are preserved so unpausing via 'p' can continue the same
+	// dictation; unpausing via the hotkey starts a fresh session.
+	StatePaused appState = iota
+	// StateListening is the normal idle-running mode: the mic is live and VAD
+	// is below threshold.
+	StateListening
+	// StateDictating is the normal active mode: VAD is above threshold and
+	// real-time transcription is running.
+	StateDictating
+	// StateFinalizing processes the final transcription of the current
+	// session, emits/pastes it, then transitions to StatePaused (or
+	// StateListening with --skip-pause-mode).
+	StateFinalizing
+)
+
+func (s appState) String() string {
+	switch s {
+	case StatePaused:
+		return "PAUSED"
+	case StateListening:
+		return "LISTENING"
+	case StateDictating:
+		return "DICTATING"
+	case StateFinalizing:
+		return "FINALIZING"
+	default:
+		return "UNKNOWN"
+	}
 }
 
 func printToScreen(x, y int, style tcell.Style, text string) {
@@ -122,7 +163,7 @@ func printStatus(status string) {
 	if screenHeight < 1 {
 		return
 	}
-	s := "[" + status + "] (press " + hotkeyLabel + " to stop)"
+	s := "[" + status + "] (press " + hotkeyLabel + " to finalize, p to pause, q to quit)"
 	if screenWidth > len(s) {
 		s += strings.Repeat(" ", screenWidth-len(s))
 	}
@@ -219,29 +260,40 @@ func run() {
 	var isRunning atomic.Bool
 	isRunning.Store(true)
 
-	// finalizeCh carries hotkey presses from the global-hotkey backend to the
-	// main loop, which finalizes and emits the current dictation session on
-	// each press and then clears the buffers so a new session can begin
-	// without restarting the program.
-	finalizeCh := make(chan struct{}, 1)
+	// hotkeyCh carries global-hotkey presses to the main loop. While the app
+	// is paused a press starts a fresh session; while listening/dictating a
+	// press finalizes and emits the current session.
+	hotkeyCh := make(chan struct{}, 1)
+	// pauseCh carries in-app 'p' key presses to the main loop, which toggles
+	// the paused state without finalizing.
+	pauseCh := make(chan struct{}, 1)
 
 	// tStart is captured before the setup goroutines below so that the first
 	// loop iteration sees the full setup time elapsed (matching the original
 	// behavior, where a slow screen init triggers an immediate first fetch).
 	tStart := time.Now()
 
-	registerStopHotkey(cli, finalizeCh)
+	registerStopHotkey(cli, hotkeyCh)
 	startSDLPoller(&isRunning)
 
 	initScreen()
 	defer screen.Fini()
 
-	startScreenPoller(&isRunning)
+	startScreenPoller(&isRunning, pauseCh)
 
-	printStatus("LISTENING")
+	var initialState appState
+	if cli.SkipPauseMode {
+		initialState = StateListening
+	} else {
+		initialState = StatePaused
+		if err := mic.Pause(); err != nil {
+			logActionf("audio pause at startup failed: %v", err)
+		}
+	}
+	printStatus(initialState.String())
 	screen.Show()
 
-	runMainLoop(&isRunning, mic, ctx, ctx2, wparams, params, tStart, finalizeCh, clipErr)
+	runMainLoop(&isRunning, mic, ctx, ctx2, wparams, params, tStart, hotkeyCh, pauseCh, initialState, cli.SkipPauseMode, clipErr)
 
 	// os.Exit skips defers, so restore the terminal explicitly before exiting.
 	if screen != nil {
@@ -384,22 +436,22 @@ func loadContexts(cli CLI, cp transcribe.ContextParams) (*transcribe.Context, *t
 	return ctx, ctx2
 }
 
-// registerStopHotkey parses and registers the global hotkey. On any
-// failure it warns and continues: the foreground terminal 'q' key (handled
-// by startScreenPoller) still stops the app, so this never regresses users
-// who lack permissions or platform support.
+// registerStopHotkey parses and registers the global hotkey. On any failure
+// it warns and continues: the foreground terminal 'q' key (handled by
+// startScreenPoller) still quits the app, so this never regresses users who
+// lack permissions or platform support.
 //
-// On each press the hotkey signals finalizeCh so the main loop can finalize
-// and emit the current dictation session and then clear the buffers for the
-// next one; it does not stop the program.
-func registerStopHotkey(cli CLI, finalizeCh chan<- struct{}) {
+// On each press the hotkey signals hotkeyCh so the main loop can act on it:
+// when paused it starts a fresh session, when listening/dictating it
+// finalizes and emits the current session. It does not stop the program.
+func registerStopHotkey(cli CLI, hotkeyCh chan<- struct{}) {
 	if hkMods, hkKey, perr := hotkey.ParseCombo(cli.HotkeyMods, cli.HotkeyKey); perr != nil {
 		fmt.Fprintf(os.Stderr, "warning: invalid --hotkey/--key (%q+%q): %v\n", cli.HotkeyMods, cli.HotkeyKey, perr)
-		fmt.Fprintf(os.Stderr, "warning: global hotkey disabled; stop with any terminal key instead.\n")
+		fmt.Fprintf(os.Stderr, "warning: global hotkey disabled; quit with the 'q' key instead.\n")
 		logActionf("hotkey parse failed: %v", perr)
 	} else if stopHK, rerr := hotkey.Register(hkMods, hkKey); rerr != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not register global hotkey %s+%s: %v\n", cli.HotkeyMods, cli.HotkeyKey, rerr)
-		fmt.Fprintf(os.Stderr, "warning: stop with the 'q' key instead.\n")
+		fmt.Fprintf(os.Stderr, "warning: quit with the 'q' key instead.\n")
 		logActionf("hotkey register failed: %v", rerr)
 	} else {
 		hotkeyLabel = stopHK.String()
@@ -407,9 +459,9 @@ func registerStopHotkey(cli CLI, finalizeCh chan<- struct{}) {
 		kd := stopHK.Keydown()
 		go func() {
 			for range kd {
-				logActionf("hotkey triggered, finalizing session")
+				logActionf("hotkey triggered")
 				select {
-				case finalizeCh <- struct{}{}:
+				case hotkeyCh <- struct{}{}:
 				default:
 				}
 			}
@@ -452,56 +504,129 @@ func initScreen() {
 	screenWidth, screenHeight = screen.Size()
 }
 
-// startScreenPoller runs a goroutine that watches tcell events; pressing the
-// 'q' key stops the app.
-func startScreenPoller(running *atomic.Bool) {
+// startScreenPoller runs a goroutine that watches tcell events. Pressing 'q'
+// quits the app; pressing 'p' (or 'P') signals pauseCh so the main loop can
+// toggle the paused state.
+func startScreenPoller(running *atomic.Bool, pauseCh chan<- struct{}) {
 	go func() {
 		for running.Load() {
 			ev := screen.PollEvent()
 			switch ev := ev.(type) {
 			case *tcell.EventKey:
-				if ev.Key() == tcell.KeyRune && ev.Rune() == 'q' {
-					running.Store(false)
-					return
+				if ev.Key() == tcell.KeyRune {
+					switch ev.Rune() {
+					case 'q':
+						running.Store(false)
+						return
+					case 'p', 'P':
+						select {
+						case pauseCh <- struct{}{}:
+						default:
+						}
+					}
 				}
 			}
 		}
 	}()
 }
 
-// runMainLoop is the real-time transcription loop. It samples the microphone,
-// runs VAD, transcribes active speech, merges new segments against the
-// running history, and redraws the screen.
+// runMainLoop is the real-time transcription state machine. It samples the
+// microphone, runs VAD, transcribes active speech, merges new segments
+// against the running history, and redraws the screen.
 //
-// When the global hotkey fires (finalizeCh) the loop finalizes and emits the
-// current session, clears the audio buffers, and starts a fresh session
-// without exiting. It only returns when the running flag flips or a signal is
-// received (terminal 'q', SIGINT/SIGTERM, or SDL-quit), at which point the
-// program exits without finalizing.
-func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Context, ctx2 *transcribe.Context, wparams transcribe.FullParams, p whisperParams, tStart time.Time, finalizeCh <-chan struct{}, clipErr error) {
+// State transitions:
+//   - While Paused the mic is stopped; the loop waits for an unpause (hotkey
+//     starts a fresh session, 'p' resumes the preserved one) or a quit.
+//   - While Listening/Dictating the hotkey finalizes and emits the current
+//     session (then returns to Paused, or Listening with --skip-pause-mode),
+//     and 'p' pauses without finalizing (preserving the in-flight session).
+//
+// It only returns when the running flag flips or a signal is received
+// (terminal 'q', SIGINT/SIGTERM, or SDL-quit), at which point the program
+// exits without finalizing.
+func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Context, ctx2 *transcribe.Context, wparams transcribe.FullParams, p whisperParams, tStart time.Time, hotkeyCh, pauseCh <-chan struct{}, initialState appState, skipPause bool, clipErr error) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	var segments []segment
 	tLast := tStart
+	state := initialState
 
 mainloop:
 	for running.Load() {
+		// Paused: mic is stopped, session preserved. Wait for input or a
+		// periodic wake so a quit (running flag flip) is still noticed.
+		if state == StatePaused {
+			select {
+			case <-sigCh:
+				break mainloop
+			case <-hotkeyCh:
+				// Unpause via hotkey: begin a fresh session (discard the
+				// preserved one, since the hotkey is the begin/submit gesture).
+				mic.Clear()
+				segments = nil
+				now := time.Now()
+				tLast = now
+				tStart = now
+				if err := mic.Resume(); err != nil {
+					logActionf("audio resume on unpause failed: %v", err)
+				}
+				state = StateListening
+				screen.Clear()
+				printStatus(state.String())
+				screen.Show()
+			case <-pauseCh:
+				// Unpause via 'p': resume the preserved session in place.
+				if err := mic.Resume(); err != nil {
+					logActionf("audio resume on unpause failed: %v", err)
+				}
+				state = StateListening
+				printStatus(state.String())
+				screen.Show()
+			case <-time.After(100 * time.Millisecond):
+			}
+			continue mainloop
+		}
+
+		// Listening/Dictating: drain input events, otherwise transcribe.
 		select {
 		case <-sigCh:
 			break mainloop
-		case <-finalizeCh:
-			finalizeAndContinue(mic, ctx2, wparams, segments, clipErr)
-			// Drain any backlog of hotkey presses that arrived during the
-			// (potentially slow) finalization so the next session starts clean.
-			select {
-			case <-finalizeCh:
-			default:
-			}
+		case <-hotkeyCh:
+			state = StateFinalizing
+			printStatus(state.String())
+			screen.Show()
+
+			finalText := produceFinalText(ctx2, segments, wparams, mic)
+			emitFinal(finalText, clipErr)
+			drainInput(hotkeyCh, pauseCh)
+
+			mic.Clear()
 			segments = nil
 			now := time.Now()
 			tLast = now
 			tStart = now
+			if skipPause {
+				if err := mic.Resume(); err != nil {
+					logActionf("audio resume after finalize failed: %v", err)
+				}
+				state = StateListening
+			} else {
+				// produceFinalText already paused the mic; stay paused.
+				state = StatePaused
+			}
+			screen.Clear()
+			printStatus(state.String())
+			screen.Show()
+			continue mainloop
+		case <-pauseCh:
+			// Pause without finalizing; preserve the in-flight session.
+			if err := mic.Pause(); err != nil {
+				logActionf("audio pause failed: %v", err)
+			}
+			state = StatePaused
+			printStatus(state.String())
+			screen.Show()
 			continue mainloop
 		default:
 		}
@@ -516,12 +641,14 @@ mainloop:
 		ls := mic.Get(500)
 
 		if !vad.SimpleVAD(ls, transcribe.WhisperSampleRate, 250, p.vadThold, p.freqThold, false) {
-			printStatus("SLEEP")
+			state = StateListening
+			printStatus(state.String())
 			screen.Show()
 			time.Sleep(16 * time.Millisecond)
 			continue
 		}
-		printStatus("NOT SLEEP")
+		state = StateDictating
+		printStatus(state.String())
 		screen.Show()
 		logActionf("vad activated")
 		pcmf32New := mic.Get(p.lengthMs)
@@ -573,7 +700,7 @@ mainloop:
 		}
 		printWrapped(0, 0, screenWidth, screenHeight-1, tcell.StyleDefault, strings.TrimSpace(sb.String()))
 
-		printStatus("LISTENING")
+		printStatus(state.String())
 		screen.Show()
 	}
 }
@@ -617,26 +744,18 @@ func produceFinalText(ctx2 *transcribe.Context, segments []segment, wparams tran
 	return finalText
 }
 
-// finalizeAndContinue handles a hotkey press: it finalizes the current
-// dictation session, emits the result through every available channel
-// (clipboard, /dev/clipboard, OSC 52, and a simulated paste), then clears the
-// audio buffers and resumes capture so a new session can begin immediately
-// without restarting the program. The TUI is kept on screen throughout.
-func finalizeAndContinue(mic *audio.AudioAsync, ctx2 *transcribe.Context, wparams transcribe.FullParams, segments []segment, clipErr error) {
-	printStatus("DOING FINAL TRANSCRIBE...")
-	screen.Show()
-
-	finalText := produceFinalText(ctx2, segments, wparams, mic)
-	emitFinal(finalText, clipErr)
-
-	mic.Clear()
-	if err := mic.Resume(); err != nil {
-		logActionf("audio resume after finalize failed: %v", err)
+// drainInput discards any pending hotkey/pause events that arrived while the
+// loop was blocked (e.g. during a slow finalization) so the next session
+// starts with a clean input state.
+func drainInput(hotkeyCh, pauseCh <-chan struct{}) {
+	for {
+		select {
+		case <-hotkeyCh:
+		case <-pauseCh:
+		default:
+			return
+		}
 	}
-
-	screen.Clear()
-	printStatus("LISTENING")
-	screen.Show()
 }
 
 // emitFinal offers the transcription through every available channel. The
