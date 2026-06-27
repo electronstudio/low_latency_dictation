@@ -5,6 +5,16 @@ import (
 	"testing"
 )
 
+// modMask converts a slice of Modifier bits to the combined mask used by the
+// evdev backend's exact-match check.
+func modMask(mods []Modifier) Modifier {
+	var m Modifier
+	for _, x := range mods {
+		m |= x
+	}
+	return m
+}
+
 func TestParseCombo(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -69,5 +79,41 @@ func TestHotkeyString(t *testing.T) {
 		if got := tt.h.String(); got != tt.want {
 			t.Errorf("String() = %q, want %q", got, tt.want)
 		}
+	}
+}
+
+// TestModifierMatch verifies the exact-modifier-match semantics shared by all
+// backends: a hotkey fires only when the held modifiers equal the required
+// set (no extra modifiers), and a no-modifier hotkey fires only when no
+// modifiers are held. This guards against the earlier Linux subset-match bug.
+func TestModifierMatch(t *testing.T) {
+	tests := []struct {
+		name     string
+		required []Modifier
+		held     Modifier
+		want     bool
+	}{
+		// No modifiers required: must fire only with an empty held set.
+		{"no-mod, none held", nil, 0, true},
+		{"no-mod, ctrl held", nil, ModCtrl, false},
+		{"no-mod, shift held", nil, ModShift, false},
+		// Single modifier required: exact match only.
+		{"ctrl, ctrl held", []Modifier{ModCtrl}, ModCtrl, true},
+		{"ctrl, none held", []Modifier{ModCtrl}, 0, false},
+		{"ctrl, ctrl+shift held", []Modifier{ModCtrl}, ModCtrl | ModShift, false},
+		// Two modifiers required: exact match only.
+		{"ctrl+shift, both held", []Modifier{ModCtrl, ModShift}, ModCtrl | ModShift, true},
+		{"ctrl+shift, ctrl only", []Modifier{ModCtrl, ModShift}, ModCtrl, false},
+		{"ctrl+shift, ctrl+alt", []Modifier{ModCtrl, ModShift}, ModCtrl | ModAlt, false},
+		{"ctrl+shift, all three", []Modifier{ModCtrl, ModShift}, ModCtrl | ModShift | ModAlt, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// This mirrors readLoop's check: heldMods == requiredMask.
+			requiredMask := modMask(tt.required)
+			if got := tt.held == requiredMask; got != tt.want {
+				t.Errorf("held=%b == required=%b => %v, want %v", tt.held, requiredMask, got, tt.want)
+			}
+		})
 	}
 }

@@ -156,7 +156,12 @@ func (p *platformHotkey) readLoop(ctx context.Context, dev *evdev.InputDevice, t
 		}
 		switch ev.Value {
 		case 1: // press
-			if heldMods&requiredMask == requiredMask && !down {
+			// Exact modifier match (not subset): a hotkey registered as
+			// Ctrl+Shift+D must not fire when Alt is also held, and a hotkey
+			// with no modifiers must not fire when any modifier is held. This
+			// matches the macOS (CGEventTap) and Windows (RegisterHotKey)
+			// backends, which also require an exact match.
+			if heldMods == requiredMask && !down {
 				down = true
 				select {
 				case p.keydownCh <- Event{}:
