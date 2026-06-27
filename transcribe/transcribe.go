@@ -9,17 +9,124 @@ package transcribe
 #cgo darwin LDFLAGS: ${SRCDIR}/../libs/libggml-metal.a -framework Accelerate -framework Metal -framework Foundation -framework CoreGraphics -lstdc++ -lm
 
 #include <whisper.h>
+#include <ggml.h>
 #include <ggml-backend.h>
 #include <stdlib.h>
+
+// GoDictationLogCallback is implemented in Go (see //export below) and used by
+// the C trampoline to forward whisper.cpp log lines back into Go, where they
+// are filtered by level and routed to the configured sink.
+extern void GoDictationLogCallback(enum ggml_log_level level, char * text, void * user_data);
+
+// dictationLogTrampoline adapts whisper.cpp's ggml_log_callback signature to
+// the Go callback. It exists so we never hand a Go function pointer directly
+// to C; whisper_log_set receives a plain C function pointer instead.
+static void dictationLogTrampoline(enum ggml_log_level level, const char * text, void * user_data) {
+	GoDictationLogCallback(level, (char *)text, user_data);
+}
+
+// dictationInstallLogCallback registers the trampoline as both the whisper and
+// ggml log callback (whisper_log_set forwards to ggml_log_set). Must be called
+// before any whisper/ggml call that emits log lines.
+static void dictationInstallLogCallback(void) {
+	whisper_log_set(dictationLogTrampoline, NULL);
+}
 */
 import "C"
 import (
 	"fmt"
+	"os"
+	"strings"
+	"sync"
 	"unsafe"
 )
 
 // WhisperSampleRate is the expected PCM sample rate in Hz.
 const WhisperSampleRate = 16000
+
+// LogLevel is the minimum ggml_log_level that whisper.cpp is allowed to emit.
+// It mirrors the ggml_log_level enum in ggml.h (NONE=0, DEBUG=1, INFO=2,
+// WARN=3, ERROR=4). LogLevelNone is intentionally above ERROR so it silences
+// everything, including errors.
+type LogLevel int
+
+const (
+	LogLevelNone  LogLevel = 100 // silence all whisper.cpp output
+	LogLevelDebug LogLevel = 1   // GGML_LOG_LEVEL_DEBUG
+	LogLevelInfo  LogLevel = 2   // GGML_LOG_LEVEL_INFO
+	LogLevelWarn  LogLevel = 3   // GGML_LOG_LEVEL_WARN (default)
+	LogLevelError LogLevel = 4   // GGML_LOG_LEVEL_ERROR
+)
+
+// ParseLogLevel maps a --log-level string to a LogLevel. Empty or unrecognised
+// values fall back to LogLevelWarn, preserving the historical verbosity.
+func ParseLogLevel(s string) LogLevel {
+	switch strings.ToLower(s) {
+	case "debug":
+		return LogLevelDebug
+	case "info":
+		return LogLevelInfo
+	case "warn", "warning":
+		return LogLevelWarn
+	case "error":
+		return LogLevelError
+	case "none", "silent", "quiet":
+		return LogLevelNone
+	default:
+		return LogLevelWarn
+	}
+}
+
+var (
+	logMu        sync.Mutex
+	logThreshold = int(LogLevelWarn)
+	logSink      func(LogLevel, string)
+)
+
+// SetLogLevel sets the minimum ggml_log_level emitted by whisper.cpp. Lines
+// below this level are dropped by the installed callback.
+func SetLogLevel(level LogLevel) {
+	logMu.Lock()
+	logThreshold = int(level)
+	logMu.Unlock()
+}
+
+// SetLogSink sets the destination for surviving whisper.cpp log lines. Pass
+// nil to write lines to os.Stderr (whisper.cpp's default behaviour).
+func SetLogSink(sink func(LogLevel, string)) {
+	logMu.Lock()
+	logSink = sink
+	logMu.Unlock()
+}
+
+// InstallLogCallback registers the whisper.cpp/ggml log callback. It must be
+// called before any whisper or ggml call that emits log lines, i.e. before
+// BackendLoadAll and InitFromFile.
+func InstallLogCallback() {
+	C.dictationInstallLogCallback()
+}
+
+// GoDictationLogCallback is the Go side of the whisper.cpp log callback. It is
+// exported (//export) so the C trampoline can invoke it. It filters lines by
+// the configured level and forwards survivors to the configured sink.
+//
+//export GoDictationLogCallback
+func GoDictationLogCallback(level C.enum_ggml_log_level, text *C.char, _ unsafe.Pointer) {
+	lvl := LogLevel(level)
+	logMu.Lock()
+	threshold := logThreshold
+	sink := logSink
+	logMu.Unlock()
+	if int(lvl) < threshold {
+		return
+	}
+	s := C.GoString(text)
+	if sink != nil {
+		sink(lvl, s)
+	} else {
+		os.Stderr.WriteString(s)
+	}
+}
 
 type SamplingStrategy int
 

@@ -36,6 +36,7 @@ type CLI struct {
 	Language   string  `arg:"--lang"           default:"en"                    help:"(ADVANCED: Language code)"`
 	FlashAttn  bool    `arg:"--flash-attn"     default:"true"                  help:"(ADVANCED: Use flash attention)"`
 	LogFile    string  `arg:"--log-file"       default:""                      help:"Path to log file for actions"`
+	LogLevel   string  `arg:"--log-level"      default:"warn"                   help:"whisper.cpp console log level (debug/info/warn/error/none)"`
 	HotkeyMods string  `arg:"--hotkey-mods"    default:"ctrl+shift"            help:"Modifiers for the global stop hotkey (ctrl/alt/shift/cmd|win|super, joined by +)"`
 	HotkeyKey  string  `arg:"--hotkey-key"     default:"d"                     help:"Key for the global stop hotkey (e.g. d, f1, space, escape)"`
 }
@@ -154,6 +155,21 @@ func logActionf(format string, args ...interface{}) {
 	}
 }
 
+// makeWhisperSink builds the sink handed to transcribe.SetLogSink. When a log
+// file is configured, whisper.cpp lines are written through the same *log.Logger
+// as the app's own actions (with a timestamp, trailing newline trimmed). With no
+// log file, lines go raw to os.Stderr, preserving whisper.cpp's exact format.
+func makeWhisperSink(lg *log.Logger) func(transcribe.LogLevel, string) {
+	if lg != nil {
+		return func(_ transcribe.LogLevel, text string) {
+			lg.Print(strings.TrimRight(text, "\n"))
+		}
+	}
+	return func(_ transcribe.LogLevel, text string) {
+		os.Stderr.WriteString(text)
+	}
+}
+
 // main runs the program body. On macOS, mainthread.Init hands the real main
 // thread to the NSApplication event loop (required by the global-hotkey
 // backend, which delivers events via a CGEventTap on the main run loop) and
@@ -165,8 +181,6 @@ func main() { mainthread.Init(run) }
 // run is the program body. It is invoked from a goroutine by main() on every
 // platform.
 func run() {
-	transcribe.BackendLoadAll()
-
 	var cli CLI
 	arg.MustParse(&cli)
 
@@ -179,6 +193,14 @@ func run() {
 		defer f.Close()
 		logger = log.New(f, "", log.LstdFlags)
 	}
+
+	// Install the whisper.cpp log callback before any whisper/ggml call so
+	// the level filter applies to backend discovery and model-load output.
+	transcribe.SetLogLevel(transcribe.ParseLogLevel(cli.LogLevel))
+	transcribe.SetLogSink(makeWhisperSink(logger))
+	transcribe.InstallLogCallback()
+
+	transcribe.BackendLoadAll()
 
 	logActionf("=== startup ===")
 	logActionf("model=%s final_model=%s threads=%d use_cpu=%v audio_device=%d length_ms=%d max_tokens=%d audio_ctx=%d vad_thold=%.2f freq_thold=%.1f lang=%s flash_attn=%v",
