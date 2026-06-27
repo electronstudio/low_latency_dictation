@@ -194,11 +194,13 @@ func die(code int, format string, args ...interface{}) {
 }
 
 var (
-	screen       tcell.Screen
-	screenWidth  int
-	screenHeight int
-	statusStyle  = tcell.StyleDefault.Reverse(true)
-	logger       *log.Logger
+	screen          tcell.Screen
+	screenWidth     int
+	screenHeight    int
+	statusStyle     = tcell.StyleDefault.Reverse(true)
+	finalizingStyle = tcell.StyleDefault.Foreground(tcell.ColorRed)
+	finalizedStyle  = tcell.StyleDefault.Foreground(tcell.ColorGreen)
+	logger          *log.Logger
 
 	// hotkeyLabel is the human-readable stop key combo shown in the status
 	// line. Defaults to "any key" (the foreground terminal key) and is
@@ -613,14 +615,35 @@ func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Co
 	var holdActive bool
 	var holdStart time.Time
 
+	// segmentsText concatenates the accumulated session segments into a
+	// single string for display. Used by the main loop and the finalize
+	// transition's red redraw.
+	segmentsText := func() string {
+		var sb strings.Builder
+		for _, segment := range segments {
+			sb.WriteString(segment.Text)
+		}
+		return sb.String()
+	}
+
+	// redrawText clears the screen and repaints the given text plus the
+	// status line in the given style. Used by the main loop (default style,
+	// accumulated segments) and the finalize transition (red during
+	// finalization, green for the finalized text while paused afterwards).
+	redrawText := func(text string, style tcell.Style, stateStr string) {
+		screen.Clear()
+		printWrapped(0, 0, screenWidth, screenHeight-1, style, strings.TrimSpace(text))
+		printStatus(stateStr)
+		screen.Show()
+	}
+
 	// finalize runs the final transcription, emits/pastes it, clears the
 	// session, and transitions to the post-finalize state (Paused unless
 	// --skip-pause-mode). It assumes the mic is already paused (produceFinal
 	// handles that) and leaves it paused iff the target is Paused.
 	finalize := func() {
 		state = StateFinalizing
-		printStatus(state.String())
-		screen.Show()
+		redrawText(segmentsText(), finalizingStyle, state.String())
 
 		finalText := produceFinalText(ctx2, segments, wparams, mic)
 		emitFinal(finalText, clipErr)
@@ -636,13 +659,16 @@ func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Co
 				logActionf("audio resume after finalize failed: %v", err)
 			}
 			state = StateListening
+			screen.Clear()
+			printStatus(state.String())
+			screen.Show()
 		} else {
-			// produceFinalText already paused the mic; stay paused.
+			// produceFinalText already paused the mic; stay paused. Draw the
+			// finalized text in green and leave it on screen while paused; any
+			// unpause (hotkey or 'p') clears it for the next session.
 			state = StatePaused
+			redrawText(finalText, finalizedStyle, state.String())
 		}
-		screen.Clear()
-		printStatus(state.String())
-		screen.Show()
 	}
 
 mainloop:
@@ -679,10 +705,12 @@ mainloop:
 				}
 			case <-pauseCh:
 				// Unpause via 'p': resume the preserved session in place.
+				// Clear any finalized text left on screen by a prior finalize.
 				if err := mic.Resume(); err != nil {
 					logActionf("audio resume on unpause failed: %v", err)
 				}
 				state = StateListening
+				screen.Clear()
 				printStatus(state.String())
 				screen.Show()
 			case <-time.After(100 * time.Millisecond):
@@ -793,15 +821,7 @@ mainloop:
 		}
 
 		// redraw all segments on screen
-		screen.Clear()
-		var sb strings.Builder
-		for _, segment := range segments {
-			sb.WriteString(segment.Text)
-		}
-		printWrapped(0, 0, screenWidth, screenHeight-1, tcell.StyleDefault, strings.TrimSpace(sb.String()))
-
-		printStatus(state.String())
-		screen.Show()
+		redrawText(segmentsText(), tcell.StyleDefault, state.String())
 	}
 }
 
