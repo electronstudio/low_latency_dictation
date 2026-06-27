@@ -5,14 +5,13 @@ A small Go program that does real-time speech-to-text from your microphone. It u
 ## building
 
 ```bash
+sudo apt install -y libsdl2-dev libshaderc-dev glslc libvulkan-dev 
 git submodule update --init --recursive
-```
-
-You need Go, a C compiler, SDL2, and the Vulkan headers. Then just run:
-
-```bash
 make -f Makefile.linux
 ```
+
+You need Go, a C compiler, SDL2, and the Vulkan headers. 
+
 
 This will build the vendored `whisper.cpp` libraries and produce a `dictate` binary.
 

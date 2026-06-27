@@ -243,6 +243,10 @@ func run() {
 
 	runMainLoop(&isRunning, mic, ctx, ctx2, wparams, params, tStart, finalizeCh, clipErr)
 
+	// os.Exit skips defers, so restore the terminal explicitly before exiting.
+	if screen != nil {
+		screen.Fini()
+	}
 	os.Exit(0)
 }
 
