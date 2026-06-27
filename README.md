@@ -16,6 +16,12 @@ make -f Makefile.linux
 
 This will build the vendored `whisper.cpp` libraries and produce a `dictate` binary.
 
+## requirements
+
+On Linux, needs uinput group permissions:
+
+    sudo usermod -aG uinput $USER.
+
 ## usage
 
 Make sure your microphone is active, then run:
@@ -24,7 +30,7 @@ Make sure your microphone is active, then run:
 ./dictate
 ```
 
-It'll start listening immediately. Stop it with the global hotkey (by default **Ctrl+Shift+D**, works while another app has focus) or by pressing any key in its terminal; it will print the final transcription and copy it to your clipboard.
+It'll start listening immediately. Stop it with the global hotkey (by default **Ctrl+Shift+D**, works while another app has focus) or by pressing any key in its terminal; it will print the final transcription and **paste it into whatever app has focus** (via the system clipboard + a simulated Ctrl/Cmd+V). The text is also copied to the clipboard, offered to WSL/Cygwin via `/dev/clipboard`, and sent as an OSC 52 terminal escape.
 
 The first time you run it, the required Whisper model will be downloaded automatically.
 

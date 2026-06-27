@@ -13,12 +13,13 @@ import (
 	"time"
 
 	"github.com/alexflint/go-arg"
-	"github.com/atotto/clipboard"
 	"github.com/electronstudio/low_latency_dictation/audio"
 	"github.com/electronstudio/low_latency_dictation/hotkey"
 	"github.com/electronstudio/low_latency_dictation/transcribe"
+	"github.com/electronstudio/low_latency_dictation/typing"
 	"github.com/electronstudio/low_latency_dictation/vad"
 	"github.com/gdamore/tcell/v2"
+	"golang.design/x/clipboard"
 	"golang.design/x/hotkey/mainthread"
 )
 
@@ -199,6 +200,16 @@ func run() {
 	transcribe.SetLogLevel(transcribe.ParseLogLevel(cli.LogLevel))
 	transcribe.SetLogSink(makeWhisperSink(logger))
 	transcribe.InstallLogCallback()
+
+	// Initialize the system clipboard backend. If it is unavailable (e.g. no
+	// Wayland data-control manager and no X server), keep running: the
+	// transcription is still printed and offered via /dev/clipboard and OSC 52,
+	// but the automatic paste into the focused app is skipped.
+	clipErr := clipboard.Init()
+	if clipErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: clipboard unavailable: %v\n", clipErr)
+		logActionf("clipboard init failed: %v", clipErr)
+	}
 
 	transcribe.BackendLoadAll()
 
@@ -485,17 +496,18 @@ mainloop:
 	}
 	fmt.Print(finalText)
 
-	// Method 1: atotto/clipboard
-	_ = clipboard.WriteAll(finalText)
-
-	// Method 2: /dev/clipboard (WSL/Cygwin)
+	// Offer the transcription through every available channel. The WSL/Cygwin
+	// /dev/clipboard and the OSC 52 terminal escape are environment-specific
+	// fallbacks that do not depend on the clipboard package; they always run.
 	if f, err := os.OpenFile("/dev/clipboard", os.O_WRONLY|os.O_TRUNC, 0); err == nil {
 		_, _ = f.WriteString(finalText)
 		_ = f.Close()
 	}
-
-	// Method 3: OSC 52 terminal escape sequence
 	data := base64.StdEncoding.EncodeToString([]byte(finalText))
+	if clipErr == nil {
+		clipboard.Write(clipboard.FmtText, []byte(finalText))
+	}
+
 	var seq string
 	if os.Getenv("TMUX") != "" {
 		seq = fmt.Sprintf("\033Ptmux;\033\033]52;c;%s\007\033\\", data)
@@ -505,6 +517,24 @@ mainloop:
 		seq = fmt.Sprintf("\033]52;c;%s\007", data)
 	}
 	fmt.Print(seq)
+
+	// simulate a paste (Ctrl+V on
+	// Linux/Windows, Cmd+V on macOS) into the focused application. On Linux the
+	// clipboard content is served from this process (X11 selection ownership or
+	// a Wayland data-source), so we linger briefly afterwards to let the target
+	// application read it; macOS and Windows copy into the OS clipboard and the
+	// keystroke is already queued, so no linger is needed there.
+
+	if err := typing.Paste(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not auto-paste: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: text is on the clipboard; paste manually with Ctrl/Cmd+V\n")
+		logActionf("paste failed: %v", err)
+	} else {
+		logActionf("paste ok")
+		if runtime.GOOS == "linux" {
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
 
 	os.Exit(0)
 }
