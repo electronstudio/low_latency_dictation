@@ -27,7 +27,7 @@ type CLI struct {
 	Model      string  `arg:"-m,--model"       default:"ggml-tiny.en-q8_0.bin" help:"Model for real-time transcription, e.g. ggml-medium-q5_0.bin "`
 	FinalModel string  `arg:"-f,--final-model" default:"ggml-base.en.bin"      help:"Model for finalization, e.g ggml-large-v3-turbo-q5_0.bin, none to disable"`
 	Threads    int     `arg:"-t,--threads"     default:"0"                     help:"Threads (0=auto)"`
-	UseCPU     bool    `arg:"--use-cpu"        default:"false"                  help:"Disable GPU accleration"`
+	UseCPU     bool    `arg:"--use-cpu"        default:"false"                 help:"Disable GPU accleration"`
 	CaptureID  int     `arg:"-a,--audio-device"     default:"-1"               help:"Audio device ID"`
 	LengthMs   int     `arg:"-l,--length"      default:"30000"                 help:"(ADVANCED: Buffer length in ms)"`
 	MaxTokens  int     `arg:"--max-tokens"     default:"32"                    help:"(ADVANCED: Max tokens per segment)"`
@@ -37,14 +37,14 @@ type CLI struct {
 	Language   string  `arg:"--lang"           default:"en"                    help:"(ADVANCED: Language code)"`
 	FlashAttn  bool    `arg:"--flash-attn"     default:"true"                  help:"(ADVANCED: Use flash attention)"`
 	LogFile    string  `arg:"--log-file"       default:""                      help:"Path to log file for actions"`
-	LogLevel   string  `arg:"--log-level"      default:"warn"                   help:"whisper.cpp console log level (debug/info/warn/error/none)"`
+	LogLevel   string  `arg:"--log-level"      default:"warn"                  help:"whisper.cpp console log level (debug/info/warn/error/none)"`
 	HotkeyMods string  `arg:"--hotkey-mods"    default:"ctrl+shift"            help:"Modifiers for the global stop hotkey (ctrl/alt/shift/cmd|win|super, joined by +)"`
 	HotkeyKey  string  `arg:"--hotkey-key"     default:"d"                     help:"Key for the global stop hotkey (e.g. d, f1, space, escape)"`
 }
 
 // TODO: remove LEngthMS?
 // Add final threads and final use cpu
-// display final segment even it overlapped and couldnt be added, because missing end words is annoying
+// display final segment even it overlapped and couldnt be added, because missing end word is annoying
 // do whole buffer rather than circular buffer, or at least larger circle
 // option to adjust interval
 // option to disable VAD
@@ -147,7 +147,7 @@ var (
 	// hotkeyLabel is the human-readable stop key combo shown in the status
 	// line. Defaults to "any key" (the foreground terminal key) and is
 	// replaced by the registered global combo when registration succeeds.
-	hotkeyLabel = "any key"
+	hotkeyLabel = "q"
 )
 
 func logActionf(format string, args ...interface{}) {
@@ -180,36 +180,21 @@ func makeWhisperSink(lg *log.Logger) func(transcribe.LogLevel, string) {
 func main() { mainthread.Init(run) }
 
 // run is the program body. It is invoked from a goroutine by main() on every
-// platform.
+// platform. It is a thin orchestrator: each phase is delegated to a helper,
+// and the resources they return are wired to defers so cleanup runs in the
+// reverse order of creation.
 func run() {
 	var cli CLI
 	arg.MustParse(&cli)
 
 	if cli.LogFile != "" {
-		f, err := os.OpenFile(cli.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: failed to open log file: %v\n", err)
-			os.Exit(1)
-		}
+		f := openLogFile(cli)
 		defer f.Close()
-		logger = log.New(f, "", log.LstdFlags)
 	}
 
-	// Install the whisper.cpp log callback before any whisper/ggml call so
-	// the level filter applies to backend discovery and model-load output.
-	transcribe.SetLogLevel(transcribe.ParseLogLevel(cli.LogLevel))
-	transcribe.SetLogSink(makeWhisperSink(logger))
-	transcribe.InstallLogCallback()
+	setupWhisperLogging(cli)
 
-	// Initialize the system clipboard backend. If it is unavailable (e.g. no
-	// Wayland data-control manager and no X server), keep running: the
-	// transcription is still printed and offered via /dev/clipboard and OSC 52,
-	// but the automatic paste into the focused app is skipped.
-	clipErr := clipboard.Init()
-	if clipErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: clipboard unavailable: %v\n", clipErr)
-		logActionf("clipboard init failed: %v", clipErr)
-	}
+	clipErr := initClipboard()
 
 	transcribe.BackendLoadAll()
 
@@ -219,6 +204,85 @@ func run() {
 		cli.MaxTokens, cli.AudioCtx, cli.VadThold, cli.FreqThold,
 		cli.Language, cli.FlashAttn)
 
+	params, wparams := buildParams(cli)
+
+	mic := initAudio(params)
+	defer mic.Close()
+
+	cp := transcribe.ContextParams{UseGPU: !cli.UseCPU, FlashAttn: cli.FlashAttn}
+	ctx, ctx2 := loadContexts(cli, cp)
+	defer ctx.Free()
+	if ctx2 != nil {
+		defer ctx2.Free()
+	}
+
+	var isRunning atomic.Bool
+	isRunning.Store(true)
+
+	// finalizeCh carries hotkey presses from the global-hotkey backend to the
+	// main loop, which finalizes and emits the current dictation session on
+	// each press and then clears the buffers so a new session can begin
+	// without restarting the program.
+	finalizeCh := make(chan struct{}, 1)
+
+	// tStart is captured before the setup goroutines below so that the first
+	// loop iteration sees the full setup time elapsed (matching the original
+	// behavior, where a slow screen init triggers an immediate first fetch).
+	tStart := time.Now()
+
+	registerStopHotkey(cli, finalizeCh)
+	startSDLPoller(&isRunning)
+
+	initScreen()
+	defer screen.Fini()
+
+	startScreenPoller(&isRunning)
+
+	printStatus("LISTENING")
+	screen.Show()
+
+	runMainLoop(&isRunning, mic, ctx, ctx2, wparams, params, tStart, finalizeCh, clipErr)
+
+	os.Exit(0)
+}
+
+// openLogFile creates (or appends to) the action log file and wires it to the
+// package-level logger. The caller owns the returned file handle.
+func openLogFile(cli CLI) *os.File {
+	f, err := os.OpenFile(cli.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: failed to open log file: %v\n", err)
+		os.Exit(1)
+	}
+	logger = log.New(f, "", log.LstdFlags)
+	return f
+}
+
+// setupWhisperLogging configures the whisper.cpp log level and sink before any
+// whisper/ggml call so the level filter applies to backend discovery and
+// model-load output.
+func setupWhisperLogging(cli CLI) {
+	transcribe.SetLogLevel(transcribe.ParseLogLevel(cli.LogLevel))
+	transcribe.SetLogSink(makeWhisperSink(logger))
+	transcribe.InstallLogCallback()
+}
+
+// initClipboard initializes the system clipboard backend. If it is unavailable
+// (e.g. no Wayland data-control manager and no X server), the returned error
+// is non-nil and the caller keeps running: the transcription is still printed
+// and offered via /dev/clipboard and OSC 52.
+func initClipboard() error {
+	clipErr := clipboard.Init()
+	if clipErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: clipboard unavailable: %v\n", clipErr)
+		logActionf("clipboard init failed: %v", clipErr)
+	}
+	return clipErr
+}
+
+// buildParams translates the parsed CLI into a whisperParams (used for the
+// audio/VAD path) and a transcribe.FullParams (used for every ctx.Full call).
+func buildParams(cli CLI) (whisperParams, transcribe.FullParams) {
 	params := whisperParams{
 		lengthMs:  cli.LengthMs,
 		captureID: cli.CaptureID,
@@ -257,24 +321,33 @@ func run() {
 		SuppressNST:    true,
 		BeamSize:       -1,
 	}
+	return params, wparams
+}
 
-	mic := audio.NewAudioAsync(params.lengthMs)
-	if err := mic.Init(params.captureID, transcribe.WhisperSampleRate); err != nil {
+// initAudio opens and resumes the microphone capture. The caller owns the
+// returned *audio.AudioAsync and must Close it.
+func initAudio(p whisperParams) *audio.AudioAsync {
+	mic := audio.NewAudioAsync(p.lengthMs)
+	if err := mic.Init(p.captureID, transcribe.WhisperSampleRate); err != nil {
 		logActionf("audio init failed: %v", err)
 		die(1, "main: audio.Init() failed: %v\n", err)
 	}
-	defer mic.Close()
-	logActionf("audio init ok device=%d", params.captureID)
+	logActionf("audio init ok device=%d", p.captureID)
 
 	if err := mic.Resume(); err != nil {
 		logActionf("audio resume failed: %v", err)
 		die(1, "main: audio.Resume() failed: %v\n", err)
 	}
 	logActionf("audio resume ok")
+	return mic
+}
 
-	cp := transcribe.ContextParams{UseGPU: !cli.UseCPU, FlashAttn: cli.FlashAttn}
-
-	ctxModelPath, err := resolveModelFile(params.model)
+// loadContexts resolves (downloading if necessary) and loads the primary
+// whisper context and, unless --final-model is "none", the finalization
+// context. The caller must Free both; ctx2 may be nil when finalization is
+// disabled.
+func loadContexts(cli CLI, cp transcribe.ContextParams) (*transcribe.Context, *transcribe.Context) {
+	ctxModelPath, err := resolveModelFile(cli.Model)
 	if err != nil {
 		logActionf("model load failed: %v", err)
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -286,11 +359,9 @@ func run() {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	defer ctx.Free()
 	logActionf("context init ok model=%s", ctxModelPath)
 
 	var ctx2 *transcribe.Context
-
 	if cli.FinalModel != "none" {
 		ctx2ModelPath, err := resolveModelFile(cli.FinalModel)
 		if err != nil {
@@ -304,55 +375,65 @@ func run() {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
-		defer ctx2.Free()
 		logActionf("final context init ok model=%s", ctx2ModelPath)
 	}
+	return ctx, ctx2
+}
 
-	tStart := time.Now()
-	tLast := tStart
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	var isRunning atomic.Bool
-	isRunning.Store(true)
-
-	// Register the global stop hotkey. On failure we warn and continue: the
-	// foreground terminal key (handled below) still stops the app, so this
-	// never regresses existing users who lack permissions or the platform
-	// support.
+// registerStopHotkey parses and registers the global hotkey. On any
+// failure it warns and continues: the foreground terminal 'q' key (handled
+// by startScreenPoller) still stops the app, so this never regresses users
+// who lack permissions or platform support.
+//
+// On each press the hotkey signals finalizeCh so the main loop can finalize
+// and emit the current dictation session and then clear the buffers for the
+// next one; it does not stop the program.
+func registerStopHotkey(cli CLI, finalizeCh chan<- struct{}) {
 	if hkMods, hkKey, perr := hotkey.ParseCombo(cli.HotkeyMods, cli.HotkeyKey); perr != nil {
 		fmt.Fprintf(os.Stderr, "warning: invalid --hotkey/--key (%q+%q): %v\n", cli.HotkeyMods, cli.HotkeyKey, perr)
 		fmt.Fprintf(os.Stderr, "warning: global hotkey disabled; stop with any terminal key instead.\n")
 		logActionf("hotkey parse failed: %v", perr)
 	} else if stopHK, rerr := hotkey.Register(hkMods, hkKey); rerr != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not register global hotkey %s+%s: %v\n", cli.HotkeyMods, cli.HotkeyKey, rerr)
-		fmt.Fprintf(os.Stderr, "warning: stop with any terminal key instead.\n")
+		fmt.Fprintf(os.Stderr, "warning: stop with the 'q' key instead.\n")
 		logActionf("hotkey register failed: %v", rerr)
 	} else {
 		hotkeyLabel = stopHK.String()
 		logActionf("hotkey registered: %s", hotkeyLabel)
+		kd := stopHK.Keydown()
 		go func() {
-			<-stopHK.Keydown()
-			logActionf("hotkey triggered, stopping")
-			isRunning.Store(false)
+			for range kd {
+				logActionf("hotkey triggered, finalizing session")
+				select {
+				case finalizeCh <- struct{}{}:
+				default:
+				}
+			}
+			// Backend closed the channel (e.g. unregister); exit the loop.
 		}()
 	}
+}
 
-	// Poll SDL events in a goroutine so the main loop can respond to both
-	// SDL quit events and OS signals.
+// startSDLPoller polls SDL events in a goroutine so the main loop can respond
+// to both SDL quit events and OS signals.
+func startSDLPoller(running *atomic.Bool) {
 	go func() {
-		for isRunning.Load() {
+		for running.Load() {
 			if !audio.PollEvents() {
-				isRunning.Store(false)
+				running.Store(false)
 				return
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
 	}()
+}
 
+// initScreen creates and initializes the tcell screen, populating the screen,
+// screenWidth and screenHeight globals. It exits the process on failure.
+func initScreen() {
 	tcell.SetEncodingFallback(tcell.EncodingFallbackASCII)
 
+	var err error
 	screen, err = tcell.NewScreen()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "main: failed to create tcell screen: %v\n", err)
@@ -362,33 +443,62 @@ func run() {
 		fmt.Fprintf(os.Stderr, "main: failed to init tcell screen: %v\n", err)
 		os.Exit(1)
 	}
-	defer screen.Fini()
 	screen.SetStyle(tcell.StyleDefault)
 	screen.Clear()
 	screenWidth, screenHeight = screen.Size()
+}
 
-	// Event polling goroutine for tcell (quit / resize)
+// startScreenPoller runs a goroutine that watches tcell events; pressing the
+// 'q' key stops the app.
+func startScreenPoller(running *atomic.Bool) {
 	go func() {
-		for isRunning.Load() {
+		for running.Load() {
 			ev := screen.PollEvent()
-			switch ev.(type) {
+			switch ev := ev.(type) {
 			case *tcell.EventKey:
-				isRunning.Store(false)
-				return
+				if ev.Key() == tcell.KeyRune && ev.Rune() == 'q' {
+					running.Store(false)
+					return
+				}
 			}
 		}
 	}()
+}
 
-	printStatus("LISTENING")
-	screen.Show()
+// runMainLoop is the real-time transcription loop. It samples the microphone,
+// runs VAD, transcribes active speech, merges new segments against the
+// running history, and redraws the screen.
+//
+// When the global hotkey fires (finalizeCh) the loop finalizes and emits the
+// current session, clears the audio buffers, and starts a fresh session
+// without exiting. It only returns when the running flag flips or a signal is
+// received (terminal 'q', SIGINT/SIGTERM, or SDL-quit), at which point the
+// program exits without finalizing.
+func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Context, ctx2 *transcribe.Context, wparams transcribe.FullParams, p whisperParams, tStart time.Time, finalizeCh <-chan struct{}, clipErr error) {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	var segments []segment
+	tLast := tStart
 
 mainloop:
-	for isRunning.Load() {
+	for running.Load() {
 		select {
 		case <-sigCh:
 			break mainloop
+		case <-finalizeCh:
+			finalizeAndContinue(mic, ctx2, wparams, segments, clipErr)
+			// Drain any backlog of hotkey presses that arrived during the
+			// (potentially slow) finalization so the next session starts clean.
+			select {
+			case <-finalizeCh:
+			default:
+			}
+			segments = nil
+			now := time.Now()
+			tLast = now
+			tStart = now
+			continue mainloop
 		default:
 		}
 
@@ -401,17 +511,16 @@ mainloop:
 		}
 		ls := mic.Get(500)
 
-		if !vad.SimpleVAD(ls, transcribe.WhisperSampleRate, 250, params.vadThold, params.freqThold, false) {
+		if !vad.SimpleVAD(ls, transcribe.WhisperSampleRate, 250, p.vadThold, p.freqThold, false) {
 			printStatus("SLEEP")
 			screen.Show()
-			//logActionf("status= sleep")
 			time.Sleep(16 * time.Millisecond)
 			continue
 		}
 		printStatus("NOT SLEEP")
 		screen.Show()
 		logActionf("vad activated")
-		pcmf32New := mic.Get(params.lengthMs)
+		pcmf32New := mic.Get(p.lengthMs)
 		tLast = tNow
 
 		if len(pcmf32New) == 0 {
@@ -463,10 +572,19 @@ mainloop:
 		printStatus("LISTENING")
 		screen.Show()
 	}
+}
 
-	printStatus("DOING FINAL TRANSCRIBE...")
-	screen.Show()
-
+// produceFinalText pauses the microphone and produces the final
+// transcription text for the just-ended session. When a finalization context
+// is configured (ctx2 != nil) the full captured audio is re-transcribed with
+// it; otherwise the text is assembled from the segments accumulated during
+// the real-time loop.
+//
+// It does not touch the screen or write to stdout: the caller is responsible
+// for delivering the text (emitFinal) and restoring the TUI afterwards. The
+// microphone is left paused; the caller must Clear and Resume it for the next
+// session.
+func produceFinalText(ctx2 *transcribe.Context, segments []segment, wparams transcribe.FullParams, mic *audio.AudioAsync) string {
 	mic.Pause()
 	var finalText string
 	if ctx2 != nil {
@@ -477,7 +595,6 @@ mainloop:
 			}
 		}
 
-		screen.Fini()
 		nSegments := ctx2.NSegments()
 		var sb strings.Builder
 		for i := 0; i < nSegments; i++ {
@@ -486,7 +603,6 @@ mainloop:
 		finalText = strings.TrimSpace(sb.String())
 		logActionf("final transcription n_segments=%d text=%q", nSegments, finalText)
 	} else {
-		screen.Fini()
 		var sb strings.Builder
 		for _, segment := range segments {
 			sb.WriteString(segment.Text)
@@ -494,11 +610,41 @@ mainloop:
 		finalText = strings.TrimSpace(sb.String())
 		logActionf("final text from segments text=%q", finalText)
 	}
-	fmt.Print(finalText)
+	return finalText
+}
 
-	// Offer the transcription through every available channel. The WSL/Cygwin
-	// /dev/clipboard and the OSC 52 terminal escape are environment-specific
-	// fallbacks that do not depend on the clipboard package; they always run.
+// finalizeAndContinue handles a hotkey press: it finalizes the current
+// dictation session, emits the result through every available channel
+// (clipboard, /dev/clipboard, OSC 52, and a simulated paste), then clears the
+// audio buffers and resumes capture so a new session can begin immediately
+// without restarting the program. The TUI is kept on screen throughout.
+func finalizeAndContinue(mic *audio.AudioAsync, ctx2 *transcribe.Context, wparams transcribe.FullParams, segments []segment, clipErr error) {
+	printStatus("DOING FINAL TRANSCRIBE...")
+	screen.Show()
+
+	finalText := produceFinalText(ctx2, segments, wparams, mic)
+	emitFinal(finalText, clipErr)
+
+	mic.Clear()
+	if err := mic.Resume(); err != nil {
+		logActionf("audio resume after finalize failed: %v", err)
+	}
+
+	screen.Clear()
+	printStatus("LISTENING")
+	screen.Show()
+}
+
+// emitFinal offers the transcription through every available channel. The
+// WSL/Cygwin /dev/clipboard and the OSC 52 terminal escape are
+// environment-specific fallbacks that do not depend on the clipboard package;
+// they always run. Finally it simulates a paste (Ctrl+V on Linux/Windows,
+// Cmd+V on macOS) into the focused application. On Linux the clipboard content
+// is served from this process (X11 selection ownership or a Wayland
+// data-source), so we linger briefly afterwards to let the target application
+// read it; macOS and Windows copy into the OS clipboard and the keystroke is
+// already queued, so no linger is needed there.
+func emitFinal(finalText string, clipErr error) {
 	if f, err := os.OpenFile("/dev/clipboard", os.O_WRONLY|os.O_TRUNC, 0); err == nil {
 		_, _ = f.WriteString(finalText)
 		_ = f.Close()
@@ -518,25 +664,13 @@ mainloop:
 	}
 	fmt.Print(seq)
 
-	// simulate a paste (Ctrl+V on
-	// Linux/Windows, Cmd+V on macOS) into the focused application. On Linux the
-	// clipboard content is served from this process (X11 selection ownership or
-	// a Wayland data-source), so we linger briefly afterwards to let the target
-	// application read it; macOS and Windows copy into the OS clipboard and the
-	// keystroke is already queued, so no linger is needed there.
-
 	if err := typing.Paste(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not auto-paste: %v\n", err)
 		fmt.Fprintf(os.Stderr, "warning: text is on the clipboard; paste manually with Ctrl/Cmd+V\n")
 		logActionf("paste failed: %v", err)
 	} else {
 		logActionf("paste ok")
-		if runtime.GOOS == "linux" {
-			time.Sleep(200 * time.Millisecond)
-		}
 	}
-
-	os.Exit(0)
 }
 
 type segment struct {

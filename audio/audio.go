@@ -256,6 +256,17 @@ func (a *AudioAsync) GetFullAudio() []float32 {
 	return a.fullAudio
 }
 
+// Clear resets the circular buffer and the full-audio backlog so capture can
+// start a fresh dictation session without leftovers from the previous one.
+// The underlying slice storage is retained (only the logical length is reset).
+func (a *AudioAsync) Clear() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.audioPos = 0
+	a.audioLen = 0
+	a.fullAudio = a.fullAudio[:0]
+}
+
 // PollEvents returns false if the user requested quit (window close, etc.).
 func PollEvents() bool {
 	var event C.SDL_Event
