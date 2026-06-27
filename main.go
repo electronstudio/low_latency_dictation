@@ -114,6 +114,20 @@ func (s appState) String() string {
 	}
 }
 
+// hotkeyEvt carries a global-hotkey keydown/keyup from the forwarder to the
+// main loop. t is stamped by the forwarder at receive time so the main loop
+// can measure hold duration accurately regardless of its own polling latency.
+type hotkeyEvt struct {
+	down bool
+	t    time.Time
+}
+
+// holdThreshold is the minimum key-down duration for the hold-to-finalize
+// gesture: holding the global hotkey longer than this while in the PAUSED
+// state finalizes on release (push-to-talk); a shorter tap just unpauses and
+// keeps listening.
+const holdThreshold = 200 * time.Millisecond
+
 func printToScreen(x, y int, style tcell.Style, text string) {
 	for i, r := range text {
 		screen.SetContent(x+i, y, r, nil, style)
@@ -260,10 +274,13 @@ func run() {
 	var isRunning atomic.Bool
 	isRunning.Store(true)
 
-	// hotkeyCh carries global-hotkey presses to the main loop. While the app
-	// is paused a press starts a fresh session; while listening/dictating a
-	// press finalizes and emits the current session.
-	hotkeyCh := make(chan struct{}, 1)
+	// hotkeyCh carries global-hotkey keydown/keyup events to the main loop.
+	// It is buffered so a keyup is never dropped while the loop is briefly
+	// blocked (e.g. inside ctx.Full). While the app is paused a short tap
+	// starts a fresh session; a press held longer than holdThreshold finalizes
+	// on release (push-to-talk). While listening/dictating any keydown
+	// finalizes and emits the current session.
+	hotkeyCh := make(chan hotkeyEvt, 4)
 	// pauseCh carries in-app 'p' key presses to the main loop, which toggles
 	// the paused state without finalizing.
 	pauseCh := make(chan struct{}, 1)
@@ -441,10 +458,12 @@ func loadContexts(cli CLI, cp transcribe.ContextParams) (*transcribe.Context, *t
 // startScreenPoller) still quits the app, so this never regresses users who
 // lack permissions or platform support.
 //
-// On each press the hotkey signals hotkeyCh so the main loop can act on it:
-// when paused it starts a fresh session, when listening/dictating it
-// finalizes and emits the current session. It does not stop the program.
-func registerStopHotkey(cli CLI, hotkeyCh chan<- struct{}) {
+// On each keydown/keyup the hotkey signals hotkeyCh so the main loop can act
+// on it: when paused a short tap starts a fresh session, a press held longer
+// than holdThreshold finalizes on release (push-to-talk); when
+// listening/dictating any keydown finalizes and emits the current session. It
+// does not stop the program.
+func registerStopHotkey(cli CLI, hotkeyCh chan<- hotkeyEvt) {
 	if hkMods, hkKey, perr := hotkey.ParseCombo(cli.HotkeyMods, cli.HotkeyKey); perr != nil {
 		fmt.Fprintf(os.Stderr, "warning: invalid --hotkey/--key (%q+%q): %v\n", cli.HotkeyMods, cli.HotkeyKey, perr)
 		fmt.Fprintf(os.Stderr, "warning: global hotkey disabled; quit with the 'q' key instead.\n")
@@ -457,15 +476,31 @@ func registerStopHotkey(cli CLI, hotkeyCh chan<- struct{}) {
 		hotkeyLabel = stopHK.String()
 		logActionf("hotkey registered: %s", hotkeyLabel)
 		kd := stopHK.Keydown()
+		ku := stopHK.Keyup()
 		go func() {
-			for range kd {
-				logActionf("hotkey triggered")
+			for {
 				select {
-				case hotkeyCh <- struct{}{}:
-				default:
+				case _, ok := <-kd:
+					if !ok {
+						return
+					}
+					logActionf("hotkey keydown")
+					select {
+					case hotkeyCh <- hotkeyEvt{down: true, t: time.Now()}:
+					default:
+					}
+				case _, ok := <-ku:
+					if !ok {
+						return
+					}
+					logActionf("hotkey keyup")
+					select {
+					case hotkeyCh <- hotkeyEvt{down: false, t: time.Now()}:
+					default:
+					}
 				}
 			}
-			// Backend closed the channel (e.g. unregister); exit the loop.
+			// Backend closed both channels (e.g. unregister); exit the loop.
 		}()
 	}
 }
@@ -535,22 +570,64 @@ func startScreenPoller(running *atomic.Bool, pauseCh chan<- struct{}) {
 // against the running history, and redraws the screen.
 //
 // State transitions:
-//   - While Paused the mic is stopped; the loop waits for an unpause (hotkey
-//     starts a fresh session, 'p' resumes the preserved one) or a quit.
-//   - While Listening/Dictating the hotkey finalizes and emits the current
-//     session (then returns to Paused, or Listening with --skip-pause-mode),
-//     and 'p' pauses without finalizing (preserving the in-flight session).
+//   - While Paused the mic is stopped; the loop waits for an unpause or a
+//     quit. A hotkey keydown unpauses into a fresh session and arms the
+//     hold-to-finalize gesture; 'p' resumes the preserved session.
+//   - While Listening/Dictating a hotkey keydown finalizes and emits the
+//     current session (then returns to Paused, or Listening with
+//     --skip-pause-mode), and 'p' pauses without finalizing (preserving the
+//     in-flight session). A hotkey keyup that releases an armed hold finalizes
+//     iff the press lasted at least holdThreshold (push-to-talk); other keyups
+//     are ignored.
 //
 // It only returns when the running flag flips or a signal is received
 // (terminal 'q', SIGINT/SIGTERM, or SDL-quit), at which point the program
 // exits without finalizing.
-func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Context, ctx2 *transcribe.Context, wparams transcribe.FullParams, p whisperParams, tStart time.Time, hotkeyCh, pauseCh <-chan struct{}, initialState appState, skipPause bool, clipErr error) {
+func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Context, ctx2 *transcribe.Context, wparams transcribe.FullParams, p whisperParams, tStart time.Time, hotkeyCh <-chan hotkeyEvt, pauseCh <-chan struct{}, initialState appState, skipPause bool, clipErr error) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	var segments []segment
 	tLast := tStart
 	state := initialState
+
+	// holdActive is true between a hotkey keydown that armed the
+	// hold-to-finalize gesture (only possible from Paused) and its matching
+	// keyup. holdStart is the keydown timestamp used to test holdThreshold.
+	var holdActive bool
+	var holdStart time.Time
+
+	// finalize runs the final transcription, emits/pastes it, clears the
+	// session, and transitions to the post-finalize state (Paused unless
+	// --skip-pause-mode). It assumes the mic is already paused (produceFinal
+	// handles that) and leaves it paused iff the target is Paused.
+	finalize := func() {
+		state = StateFinalizing
+		printStatus(state.String())
+		screen.Show()
+
+		finalText := produceFinalText(ctx2, segments, wparams, mic)
+		emitFinal(finalText, clipErr)
+		drainInput(hotkeyCh, pauseCh)
+
+		mic.Clear()
+		segments = nil
+		now := time.Now()
+		tLast = now
+		tStart = now
+		if skipPause {
+			if err := mic.Resume(); err != nil {
+				logActionf("audio resume after finalize failed: %v", err)
+			}
+			state = StateListening
+		} else {
+			// produceFinalText already paused the mic; stay paused.
+			state = StatePaused
+		}
+		screen.Clear()
+		printStatus(state.String())
+		screen.Show()
+	}
 
 mainloop:
 	for running.Load() {
@@ -560,21 +637,30 @@ mainloop:
 			select {
 			case <-sigCh:
 				break mainloop
-			case <-hotkeyCh:
-				// Unpause via hotkey: begin a fresh session (discard the
-				// preserved one, since the hotkey is the begin/submit gesture).
-				mic.Clear()
-				segments = nil
-				now := time.Now()
-				tLast = now
-				tStart = now
-				if err := mic.Resume(); err != nil {
-					logActionf("audio resume on unpause failed: %v", err)
+			case evt := <-hotkeyCh:
+				if evt.down {
+					// Unpause via hotkey: begin a fresh session (discard the
+					// preserved one, since the hotkey is the begin/submit
+					// gesture) and arm the hold-to-finalize gesture.
+					mic.Clear()
+					segments = nil
+					now := time.Now()
+					tLast = now
+					tStart = now
+					if err := mic.Resume(); err != nil {
+						logActionf("audio resume on unpause failed: %v", err)
+					}
+					holdActive = true
+					holdStart = evt.t
+					state = StateListening
+					screen.Clear()
+					printStatus(state.String())
+					screen.Show()
+				} else {
+					// keyup while still Paused (e.g. paused again before the
+					// release): just disarm; nothing to finalize.
+					holdActive = false
 				}
-				state = StateListening
-				screen.Clear()
-				printStatus(state.String())
-				screen.Show()
 			case <-pauseCh:
 				// Unpause via 'p': resume the preserved session in place.
 				if err := mic.Resume(); err != nil {
@@ -592,35 +678,33 @@ mainloop:
 		select {
 		case <-sigCh:
 			break mainloop
-		case <-hotkeyCh:
-			state = StateFinalizing
-			printStatus(state.String())
-			screen.Show()
-
-			finalText := produceFinalText(ctx2, segments, wparams, mic)
-			emitFinal(finalText, clipErr)
-			drainInput(hotkeyCh, pauseCh)
-
-			mic.Clear()
-			segments = nil
-			now := time.Now()
-			tLast = now
-			tStart = now
-			if skipPause {
-				if err := mic.Resume(); err != nil {
-					logActionf("audio resume after finalize failed: %v", err)
+		case evt := <-hotkeyCh:
+			if evt.down {
+				// Keydown while active (not an armed hold) finalizes the
+				// current session, matching the original toggle behavior.
+				if !holdActive {
+					finalize()
 				}
-				state = StateListening
+				// A second keydown during an armed hold is ignored; only the
+				// release decides whether to submit.
 			} else {
-				// produceFinalText already paused the mic; stay paused.
-				state = StatePaused
+				// Release of an armed hold: finalize iff it was a long press.
+				if holdActive {
+					held := evt.t.Sub(holdStart)
+					holdActive = false
+					if held >= holdThreshold {
+						logActionf("hold finalized after %dms", held.Milliseconds())
+						finalize()
+					} else {
+						logActionf("hold released after %dms (tap, keep listening)", held.Milliseconds())
+					}
+				}
+				// A stray keyup with no armed hold is ignored.
 			}
-			screen.Clear()
-			printStatus(state.String())
-			screen.Show()
 			continue mainloop
 		case <-pauseCh:
 			// Pause without finalizing; preserve the in-flight session.
+			holdActive = false
 			if err := mic.Pause(); err != nil {
 				logActionf("audio pause failed: %v", err)
 			}
@@ -747,7 +831,7 @@ func produceFinalText(ctx2 *transcribe.Context, segments []segment, wparams tran
 // drainInput discards any pending hotkey/pause events that arrived while the
 // loop was blocked (e.g. during a slow finalization) so the next session
 // starts with a clean input state.
-func drainInput(hotkeyCh, pauseCh <-chan struct{}) {
+func drainInput(hotkeyCh <-chan hotkeyEvt, pauseCh <-chan struct{}) {
 	for {
 		select {
 		case <-hotkeyCh:
