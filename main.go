@@ -24,23 +24,24 @@ import (
 )
 
 type CLI struct {
-	Model         string  `arg:"-m,--model"       default:"ggml-tiny.en-q8_0.bin" help:"Model for real-time transcription, e.g. ggml-medium-q5_0.bin "`
+	Model         string  `arg:"-m,--model" default:"ggml-tiny.en-q8_0.bin" help:"Model for real-time transcription, e.g. ggml-medium-q5_0.bin"`
+	Preset        string  `arg:"-q,--quality-preset" default:"" help:"low: no GPU, medium: poor GPU, high: good GPU"`
 	FinalModel    string  `arg:"-f,--final-model" default:"ggml-base.en.bin"      help:"Model for finalization, e.g ggml-large-v3-turbo-q5_0.bin, none to disable"`
-	Threads       int     `arg:"-t,--threads"     default:"0"                     help:"Threads (0=auto)"`
-	UseCPU        bool    `arg:"--use-cpu"        default:"false"                 help:"Disable GPU accleration"`
-	CaptureID     int     `arg:"-a,--audio-device"     default:"-1"               help:"Audio device ID"`
-	LengthMs      int     `arg:"-l,--length"      default:"30000"                 help:"(ADVANCED: Buffer length in ms)"`
-	MaxTokens     int     `arg:"--max-tokens"     default:"32"                    help:"(ADVANCED: Max tokens per segment)"`
-	AudioCtx      int     `arg:"--audio-ctx"      default:"0"                     help:"(ADVANCED: Audio context size)"`
-	VadThold      float32 `arg:"--vad-thold"      default:"0.8"                   help:"(ADVANCED: VAD threshold)"`
-	FreqThold     float32 `arg:"--freq-thold"     default:"100.0"                 help:"(ADVANCED: High-pass filter cutoff)"`
-	Language      string  `arg:"--lang"           default:"en"                    help:"(ADVANCED: Language code)"`
-	FlashAttn     bool    `arg:"--flash-attn"     default:"true"                  help:"(ADVANCED: Use flash attention)"`
-	LogFile       string  `arg:"--log-file"       default:""                      help:"Path to log file for actions"`
-	LogLevel      string  `arg:"--log-level"      default:"warn"                  help:"whisper.cpp console log level (debug/info/warn/error/none)"`
-	HotkeyMods    string  `arg:"--hotkey-mods"      default:"ctrl+shift" help:"Modifiers for the global hotkey (ctrl/alt/shift/cmd|win|super, joined by +)"`
-	HotkeyKey     string  `arg:"--hotkey-key"       default:"d"          help:"Key for the global hotkey (e.g. d, f1, space, escape)"`
-	SkipPauseMode bool    `arg:"--skip-pause-mode"  default:"false"       help:"Start in LISTENING and return to LISTENING after finalizing instead of PAUSED; 'p' can still pause"`
+	Threads       int     `arg:"-t,--threads" default:"0"                     help:"Threads (0=auto)"`
+	UseCPU        bool    `arg:"--use-cpu"           default:"false"                 help:"Disable GPU accleration"`
+	CaptureID     int     `arg:"-a,--audio-device"   default:"-1"                    help:"Audio device ID"`
+	LogFile       string  `arg:"--log-file"          default:""                      help:"Path to log file for actions"`
+	LogLevel      string  `arg:"--log-level"         default:"warn"                  help:"whisper.cpp console log level (debug/info/warn/error/none)"`
+	HotkeyMods    string  `arg:"--hotkey-mods"       default:"ctrl+shift"            help:"Modifiers for the global hotkey (ctrl/alt/shift/cmd|win|super, joined by +)"`
+	HotkeyKey     string  `arg:"--hotkey-key"        default:"d"                     help:"Key for the global hotkey (e.g. d, f1, space, escape)"`
+	SkipPauseMode bool    `arg:"--skip-pause-mode"   default:"false"                 help:"Start in LISTENING and return to LISTENING after finalizing instead of PAUSED."`
+	LengthMs      int     `arg:"-l,--length"         default:"30000"                 help:"(ADVANCED: Buffer length in ms)"`
+	MaxTokens     int     `arg:"--max-tokens"        default:"32"                    help:"(ADVANCED: Max tokens per segment)"`
+	AudioCtx      int     `arg:"--audio-ctx"         default:"0"                     help:"(ADVANCED: Audio context size)"`
+	VadThold      float32 `arg:"--vad-thold"         default:"0.8"                   help:"(ADVANCED: VAD threshold)"`
+	FreqThold     float32 `arg:"--freq-thold"        default:"100.0"                 help:"(ADVANCED: High-pass filter cutoff)"`
+	Language      string  `arg:"--lang"              default:"en"                    help:"(ADVANCED: Language code)"`
+	FlashAttn     bool    `arg:"--flash-attn"        default:"true"                  help:"(ADVANCED: Use flash attention)"`
 }
 
 // TODO: remove LEngthMS?
@@ -241,6 +242,21 @@ func main() { mainthread.Init(run) }
 func run() {
 	var cli CLI
 	arg.MustParse(&cli)
+
+	switch cli.Preset {
+	case "low":
+		cli.Model = "ggml-tiny.en-q5_1.bin"
+		cli.FinalModel = "ggml-small.en-q5_1.bin"
+		cli.UseCPU = true
+	case "medium":
+		cli.Model = "ggml-medium-q5_0.bin"
+		cli.FinalModel = "ggml-large-v3-turbo-q5_0.bin"
+		cli.UseCPU = false
+	case "high":
+		cli.Model = "ggml-large-v3-turbo-q5_0.bin"
+		cli.FinalModel = "ggml-large-v3-turbo-q5_0.bin"
+		cli.UseCPU = false
+	}
 
 	if cli.LogFile != "" {
 		f := openLogFile(cli)
