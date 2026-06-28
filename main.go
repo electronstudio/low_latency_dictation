@@ -32,8 +32,8 @@ type CLI struct {
 	CaptureID     int     `arg:"-a,--audio-device"   default:"-1"                    help:"Audio device ID"`
 	LogFile       string  `arg:"--log-file"          default:""                      help:"Path to log file for actions"`
 	LogLevel      string  `arg:"--log-level"         default:"warn"                  help:"whisper.cpp console log level (debug/info/warn/error/none)"`
-	HotkeyMods    string  `arg:"--hotkey-mods"       default:"ctrl+shift"            help:"Modifiers for the global hotkey (ctrl/alt/shift/cmd|win|super, joined by +)"`
-	HotkeyKey     string  `arg:"--hotkey-key"        default:"d"                     help:"Key for the global hotkey (e.g. d, f1, space, escape)"`
+	HotkeyMods    string  `arg:"--hotkey-mods"       default:"ctrl"            help:"Modifiers for the global hotkey (ctrl/alt/shift/cmd|win|super, joined by +)"`
+	HotkeyKey     string  `arg:"--hotkey-key"        default:"space"                     help:"Key for the global hotkey (e.g. d, f1, space, escape)"`
 	SkipPauseMode bool    `arg:"--skip-pause-mode"   default:"false"                 help:"Start in LISTENING and return to LISTENING after finalizing instead of PAUSED."`
 	LengthMs      int     `arg:"-l,--length"         default:"30000"                 help:"(ADVANCED: Buffer length in ms)"`
 	MaxTokens     int     `arg:"--max-tokens"        default:"32"                    help:"(ADVANCED: Max tokens per segment)"`
@@ -250,14 +250,17 @@ func run() {
 		cli.Model = "ggml-tiny.en-q5_1.bin"
 		cli.FinalModel = "ggml-small.en-q5_1.bin"
 		cli.UseCPU = true
+		cli.LengthMs = 30000
 	case "medium":
 		cli.Model = "ggml-medium-q5_0.bin"
 		cli.FinalModel = "ggml-large-v3-turbo-q5_0.bin"
 		cli.UseCPU = false
+		cli.LengthMs = 60000
 	case "high":
 		cli.Model = "ggml-large-v3-turbo-q5_0.bin"
 		cli.FinalModel = "ggml-large-v3-turbo-q5_0.bin"
 		cli.UseCPU = false
+		cli.LengthMs = 1800000
 	}
 
 	if cli.LogFile != "" {

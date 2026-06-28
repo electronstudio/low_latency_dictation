@@ -17,3 +17,5 @@ libs/*.a
 
 # Model binaries
 models/*.bin
+
+.idea
