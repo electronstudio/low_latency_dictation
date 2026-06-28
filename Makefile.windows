@@ -12,6 +12,15 @@ GO_TAGS := -tags vulkan
 VULKAN_LDFLAGS := -lvulkan-1
 endif
 
+# App icon (embedded as a Win32 resource into the .exe).
+# dictate_windows_amd64.syso is auto-linked by `go build` when it sits next
+# to main.go; the _amd64 suffix scopes it to GOARCH=amd64.
+WINDRES ?= $(shell command -v windres 2>/dev/null || command -v x86_64-w64-mingw32-windres 2>/dev/null || command -v llvm-windres 2>/dev/null)
+MAGICK  ?= $(shell command -v magick 2>/dev/null || command -v convert 2>/dev/null)
+ICO     := assets/dictate.ico
+RC      := assets/dictate.rc
+SYSO    := dictate_windows_amd64.syso
+
 # Use cygpath -m to emit paths that gcc.exe understands on Windows
 SDL2_CFLAGS  := -I$(shell cygpath -m /ucrt64/include/SDL2) -D_REENTRANT
 SDL2_LDFLAGS := -L$(shell cygpath -m /ucrt64/lib) -mwindows -Wl,-Bstatic -Wl,--start-group -lSDL2main -lSDL2 -lwinpthread -Wl,--end-group -Wl,-Bdynamic -lmingw32 -lsetupapi -lcfgmgr32 -lwinmm -limm32 -lole32 -loleaut32 -lversion -luuid -lgdi32 $(VULKAN_LDFLAGS)
@@ -21,8 +30,21 @@ CGO_LDFLAGS := $(SDL2_LDFLAGS)
 
 .PHONY: all clean whisper_libs install uninstall
 
-all: whisper_libs
+all: whisper_libs $(SYSO)
 	CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" go build -o $(BINARY) $(GO_TAGS) .
+
+# Embed the icon as a Win32 resource object that `go build` auto-links.
+$(SYSO): $(RC) $(ICO)
+	@if [ -z "$(WINDRES)" ]; then echo "Error: windres not found (install mingw-w64-tools or run under MSYS2)" >&2; exit 1; fi
+	$(WINDRES) -I$(CURDIR)/assets -O coff -o $@ $(RC)
+
+# Regenerate the multi-resolution ICO from the source PNG when ImageMagick
+# is available. When it is not (e.g. plain MSYS2), fall back to the committed ICO.
+ifneq ($(MAGICK),)
+$(ICO): assets/dictate.png
+	@echo "Regenerating $@ from $<"
+	$(MAGICK) $< \( +clone -resize 16x16 \) \( +clone -resize 32x32 \) \( +clone -resize 48x48 \) \( +clone -resize 64x64 \) \( +clone -resize 128x128 \) -strip $@
+endif
 
 whisper_libs:
 	@missing=0; \
@@ -51,5 +73,5 @@ install uninstall:
 	@echo "install/uninstall not supported on this platform"
 
 clean:
-	rm -f $(BINARY) $(BINARY) libs/*.a libs/*.lib
+	rm -f $(BINARY) $(BINARY) libs/*.a libs/*.lib $(SYSO)
 	rm -rf $(WHISPER_BUILD)

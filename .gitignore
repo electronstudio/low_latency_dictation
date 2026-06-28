@@ -9,6 +9,9 @@ dictate
 *.test
 *.prof
 
+# Generated Win32 resource object (icon) -- rebuilt from assets/dictate.rc + .ico
+dictate_windows_amd64.syso
+
 # Vendored static libraries
 libs/*.a
 

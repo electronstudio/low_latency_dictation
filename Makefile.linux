@@ -7,6 +7,7 @@ WHISPER_LIBS := libs/libggml-base.a libs/libggml-cpu.a libs/libggml.a libs/libwh
 PREFIX ?= /usr
 BINDIR := $(PREFIX)/bin
 APPDIR := $(PREFIX)/share/applications
+ICONDIR := $(PREFIX)/share/icons/hicolor
 
 GGML_VULKAN ?= ON
 
@@ -53,10 +54,16 @@ install: all
 	install -Dm755 $(BINARY) $(DESTDIR)$(BINDIR)/$(BINARY)
 	mkdir -p $(DESTDIR)$(APPDIR)
 	sed 's|@BINDIR@|$(BINDIR)|' dictate.desktop.in > $(DESTDIR)$(APPDIR)/dictate.desktop
+	# Install the app icon into the hicolor theme (SVG scalable + 256 PNG fallback).
+	install -Dm644 assets/dictate.svg  $(DESTDIR)$(ICONDIR)/scalable/apps/dictate.svg
+	install -Dm644 assets/dictate.png  $(DESTDIR)$(ICONDIR)/256x256/apps/dictate.png
+	gtk-update-icon-cache -f $(DESTDIR)$(ICONDIR) 2>/dev/null || true
 	update-desktop-database $(DESTDIR)$(APPDIR) 2>/dev/null || true
 
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(BINARY) $(DESTDIR)$(APPDIR)/dictate.desktop
+	rm -f $(DESTDIR)$(ICONDIR)/scalable/apps/dictate.svg $(DESTDIR)$(ICONDIR)/256x256/apps/dictate.png
+	gtk-update-icon-cache -f $(DESTDIR)$(ICONDIR) 2>/dev/null || true
 	update-desktop-database $(DESTDIR)$(APPDIR) 2>/dev/null || true
 
 clean:
