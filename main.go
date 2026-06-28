@@ -311,7 +311,7 @@ func run() {
 	// behavior, where a slow screen init triggers an immediate first fetch).
 	tStart := time.Now()
 
-	registerStopHotkey(cli, hotkeyCh)
+	registerGlobalHotkey(cli, hotkeyCh)
 	startSDLPoller(&isRunning)
 
 	initScreen()
@@ -474,7 +474,7 @@ func loadContexts(cli CLI, cp transcribe.ContextParams) (*transcribe.Context, *t
 	return ctx, ctx2
 }
 
-// registerStopHotkey parses and registers the global hotkey. On any failure
+// registerGlobalHotkey parses and registers the global hotkey. On any failure
 // it warns and continues: the foreground terminal 'q' key (handled by
 // startScreenPoller) still quits the app, so this never regresses users who
 // lack permissions or platform support.
@@ -484,15 +484,13 @@ func loadContexts(cli CLI, cp transcribe.ContextParams) (*transcribe.Context, *t
 // than holdThreshold finalizes on release (push-to-talk); when
 // listening/dictating any keydown finalizes and emits the current session. It
 // does not stop the program.
-func registerStopHotkey(cli CLI, hotkeyCh chan<- hotkeyEvt) {
-	if hkMods, hkKey, perr := hotkey.ParseCombo(cli.HotkeyMods, cli.HotkeyKey); perr != nil {
-		fmt.Fprintf(os.Stderr, "warning: invalid --hotkey/--key (%q+%q): %v\n", cli.HotkeyMods, cli.HotkeyKey, perr)
-		fmt.Fprintf(os.Stderr, "warning: global hotkey disabled; quit with the 'q' key instead.\n")
-		logActionf("hotkey parse failed: %v", perr)
+func registerGlobalHotkey(cli CLI, hotkeyCh chan<- hotkeyEvt) {
+	if cli.HotkeyKey == "" {
+		fmt.Fprintf(os.Stderr, "warning: global hotkey disabled.\n")
+	} else if hkMods, hkKey, perr := hotkey.ParseCombo(cli.HotkeyMods, cli.HotkeyKey); perr != nil {
+		die(1, "error: invalid --hotkey-mods or --hotkey-key (%q+%q): %v\n", cli.HotkeyMods, cli.HotkeyKey, perr)
 	} else if stopHK, rerr := hotkey.Register(hkMods, hkKey); rerr != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not register global hotkey %s+%s: %v\n", cli.HotkeyMods, cli.HotkeyKey, rerr)
-		fmt.Fprintf(os.Stderr, "warning: quit with the 'q' key instead.\n")
-		logActionf("hotkey register failed: %v", rerr)
+		die(1, "error: could not register global hotkey %s+%s: %v\n", cli.HotkeyMods, cli.HotkeyKey, rerr)
 	} else {
 		hotkeyLabel = stopHK.String()
 		logActionf("hotkey registered: %s", hotkeyLabel)
@@ -913,7 +911,7 @@ func emitFinal(finalText string, clipErr error) {
 	if err := typing.Paste(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not auto-paste: %v\n", err)
 		fmt.Fprintf(os.Stderr, "warning: text is on the clipboard; paste manually with Ctrl/Cmd+V\n")
-		logActionf("paste failed: %v", err)
+		die(1, "paste failed: %v", err)
 	} else {
 		logActionf("paste ok")
 	}

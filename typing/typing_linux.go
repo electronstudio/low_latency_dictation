@@ -30,11 +30,10 @@ func Paste() error {
 			return fmt.Errorf(
 				"%w\n\n"+
 					"  Cannot open /dev/uinput.\n"+
-					"  Add your user to the 'uinput' group and log out/in (or reboot):\n\n"+
+					"  Add your user to the 'uinput' group and then reboot:\n\n"+
 					"      sudo usermod -aG uinput $USER\n\n"+
-					"  This is required to synthesize keystrokes via the Linux uinput\n"+
-					"  subsystem, which works under both X11 and Wayland but needs write\n"+
-					"  access to /dev/uinput.",
+					"  Alternatively, disable hotkey feature and paste manually:\n\n"+
+					"      dictate --hotkey-key \"\"\n\n",
 				errUinputPermission)
 		}
 		return fmt.Errorf("typing: could not create virtual keyboard: %w", err)

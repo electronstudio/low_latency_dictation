@@ -56,11 +56,10 @@ func (h *Hotkey) register() error {
 			return fmt.Errorf(
 				"%w\n\n"+
 					"  Cannot read any keyboard /dev/input/event* device.\n"+
-					"  Add your user to the 'input' group and log out/in (or reboot):\n\n"+
+					"  Add your user to the 'input' group and then reboot:\n\n"+
 					"      sudo usermod -aG input $USER\n\n"+
-					"  This is required because the global hotkey is read directly from\n"+
-					"  the Linux input subsystem (evdev), which works under both X11 and\n"+
-					"  Wayland but needs read access to input devices.",
+					"  Alternatively, disable hotkey feature:\n\n"+
+					"      dictate --hotkey-key \"\"\n\n",
 				ErrPermissionDenied)
 		}
 		return errors.New("hotkey: no keyboard input devices found")
@@ -68,10 +67,10 @@ func (h *Hotkey) register() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	p := &platformHotkey{
-		keydownCh: make(chan Event, 1),
-		keyupCh:   make(chan Event, 1),
-		devices:   devices,
-		stop:      cancel,
+		keydownCh:  make(chan Event, 1),
+		keyupCh:    make(chan Event, 1),
+		devices:    devices,
+		stop:       cancel,
 		registered: true,
 	}
 	h.platformHotkey = p
