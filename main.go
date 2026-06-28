@@ -32,9 +32,9 @@ type CLI struct {
 	CaptureID     int     `arg:"-a,--audio-device"   default:"-1"                    help:"Audio device ID"`
 	LogFile       string  `arg:"--log-file"          default:""                      help:"Path to log file for actions"`
 	LogLevel      string  `arg:"--log-level"         default:"warn"                  help:"whisper.cpp console log level (debug/info/warn/error/none)"`
-	HotkeyMods    string  `arg:"--hotkey-mods"       default:"ctrl"            help:"Modifiers for the global hotkey (ctrl/alt/shift/cmd|win|super, joined by +)"`
-	HotkeyKey     string  `arg:"--hotkey-key"        default:"space"                     help:"Key for the global hotkey (e.g. d, f1, space, escape)"`
-	SkipPauseMode bool    `arg:"--skip-pause-mode"   default:"false"                 help:"Start in LISTENING and return to LISTENING after finalizing instead of PAUSED."`
+	HotkeyMods    string  `arg:"--hotkey-mods"       default:"ctrl"                  help:"Modifiers for the global hotkey (ctrl/alt/shift/cmd|win|super, joined by +)"`
+	HotkeyKey     string  `arg:"--hotkey-key"        default:"space"                 help:"Key for the global hotkey (e.g. d, f1, space, escape)"`
+	SkipPauseMode bool    `arg:"--skip-pause-mode"   default:"false"                 help:"Start listening immediately, and do not pause after pasting."`
 	LengthMs      int     `arg:"-l,--length"         default:"30000"                 help:"(ADVANCED: Buffer length in ms)"`
 	MaxTokens     int     `arg:"--max-tokens"        default:"32"                    help:"(ADVANCED: Max tokens per segment)"`
 	AudioCtx      int     `arg:"--audio-ctx"         default:"0"                     help:"(ADVANCED: Audio context size)"`
@@ -178,7 +178,7 @@ func printStatus(status string) {
 	if screenHeight < 1 {
 		return
 	}
-	s := "[" + status + "] (press " + hotkeyLabel + " to finalize, p to pause, q to quit)"
+	s := "[" + hotkeyLabel + "] start/end/paste [P]ause [Q]uit [D]elete   <" + status + ">"
 	if screenWidth > len(s) {
 		s += strings.Repeat(" ", screenWidth-len(s))
 	}
