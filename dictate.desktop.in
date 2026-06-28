@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Dictate
+GenericName=Speech to Text
+Comment=Real-time microphone speech-to-text using whisper.cpp
+Icon=audio-input-microphone
+TryExec=@BINDIR@/dictate
+Exec=sh -c "@BINDIR@/dictate; echo; echo 'Press Enter to close'; read"
+Terminal=true
+Categories=AudioVideo;Audio;Utility;
+Keywords=speech;dictation;transcription;whisper;voice;
+StartupNotify=false

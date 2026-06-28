@@ -14,9 +14,9 @@ endif
 
 MAKEFILE := Makefile.$(PLATFORM)
 
-.PHONY: all clean whisper_libs help
+.PHONY: all clean whisper_libs install uninstall help
 
-all clean whisper_libs:
+all clean whisper_libs install uninstall:
 	@echo "==> Building on $(PLATFORM) using $(MAKEFILE)"
 	$(MAKE) -f $(MAKEFILE) $@
 

@@ -4,6 +4,10 @@ WHISPER_BUILD := $(WHISPER_DIR)/build
 CPU_COUNT := $(shell nproc 2>/dev/null || echo 1)
 WHISPER_LIBS := libs/libggml-base.a libs/libggml-cpu.a libs/libggml.a libs/libwhisper.a
 
+PREFIX ?= /usr
+BINDIR := $(PREFIX)/bin
+APPDIR := $(PREFIX)/share/applications
+
 GGML_VULKAN ?= ON
 
 ifeq ($(GGML_VULKAN),ON)
@@ -18,7 +22,7 @@ SDL2_LDFLAGS := -lSDL2 -fopenmp
 CGO_CFLAGS := $(SDL2_CFLAGS) -I$(CURDIR)/$(WHISPER_DIR)/include -I$(CURDIR)/$(WHISPER_DIR)/ggml/include -I$(CURDIR)/$(WHISPER_DIR)/ggml/src
 CGO_LDFLAGS := $(SDL2_LDFLAGS) $(VULKAN_LDFLAGS)
 
-.PHONY: all clean whisper_libs
+.PHONY: all clean whisper_libs install uninstall
 
 all: whisper_libs
 	CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" go build -o $(BINARY) $(GO_TAGS) .
@@ -44,6 +48,16 @@ whisper_libs:
 			cp $(WHISPER_BUILD)/ggml/src/ggml-vulkan/libggml-vulkan.a libs/; \
 		fi \
 	fi
+
+install: all
+	install -Dm755 $(BINARY) $(DESTDIR)$(BINDIR)/$(BINARY)
+	mkdir -p $(DESTDIR)$(APPDIR)
+	sed 's|@BINDIR@|$(BINDIR)|' dictate.desktop.in > $(DESTDIR)$(APPDIR)/dictate.desktop
+	update-desktop-database $(DESTDIR)$(APPDIR) 2>/dev/null || true
+
+uninstall:
+	rm -f $(DESTDIR)$(BINDIR)/$(BINARY) $(DESTDIR)$(APPDIR)/dictate.desktop
+	update-desktop-database $(DESTDIR)$(APPDIR) 2>/dev/null || true
 
 clean:
 	rm -f $(BINARY) libs/*.a

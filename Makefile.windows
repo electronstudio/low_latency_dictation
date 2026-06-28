@@ -19,7 +19,7 @@ SDL2_LDFLAGS := -L$(shell cygpath -m /ucrt64/lib) -mwindows -Wl,-Bstatic -Wl,--s
 CGO_CFLAGS := $(SDL2_CFLAGS) -I$(CURDIR)/$(WHISPER_DIR)/include -I$(CURDIR)/$(WHISPER_DIR)/ggml/include -I$(CURDIR)/$(WHISPER_DIR)/ggml/src
 CGO_LDFLAGS := $(SDL2_LDFLAGS)
 
-.PHONY: all clean whisper_libs
+.PHONY: all clean whisper_libs install uninstall
 
 all: whisper_libs
 	CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" go build -o $(BINARY) $(GO_TAGS) .
@@ -46,6 +46,9 @@ whisper_libs:
 			cp $(WHISPER_BUILD)/ggml/src/ggml-vulkan/libggml-vulkan.a libs/ 2>/dev/null || cp $(WHISPER_BUILD)/ggml/src/ggml-vulkan/ggml-vulkan.a libs/libggml-vulkan.a 2>/dev/null || cp $(WHISPER_BUILD)/ggml/src/ggml-vulkan/ggml-vulkan.lib libs/libggml-vulkan.a; \
 		fi \
 	fi
+
+install uninstall:
+	@echo "install/uninstall not supported on this platform"
 
 clean:
 	rm -f $(BINARY) $(BINARY) libs/*.a libs/*.lib
