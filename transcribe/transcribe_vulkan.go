@@ -5,7 +5,8 @@ package transcribe
 
 /*
 #cgo LDFLAGS: ${SRCDIR}/../libs/libggml-vulkan.a -lm
-#cgo !windows LDFLAGS: -lstdc++
+#cgo linux LDFLAGS: -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic
+#cgo darwin LDFLAGS: -lstdc++
 #cgo windows LDFLAGS: -Wl,-Bstatic -Wl,--start-group -lstdc++ -lwinpthread -Wl,--end-group -Wl,-Bdynamic
 */
 import "C"
