@@ -15,6 +15,7 @@ import (
 	"github.com/alexflint/go-arg"
 	"github.com/electronstudio/low_latency_dictation/audio"
 	"github.com/electronstudio/low_latency_dictation/hotkey"
+	"github.com/electronstudio/low_latency_dictation/toast"
 	"github.com/electronstudio/low_latency_dictation/transcribe"
 	"github.com/electronstudio/low_latency_dictation/typing"
 	"github.com/electronstudio/low_latency_dictation/vad"
@@ -271,6 +272,10 @@ func run() {
 	setupWhisperLogging(cli)
 
 	clipErr := initClipboard()
+
+	if err := toast.Init(logger); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	}
 
 	transcribe.BackendLoadAll()
 
@@ -636,6 +641,11 @@ func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Co
 		printWrapped(0, 0, screenWidth, screenHeight-1, style, strings.TrimSpace(text))
 		printStatus(stateStr)
 		screen.Show()
+		var persist = true
+		if state == StatePaused {
+			persist = false
+		}
+		toast.Show(stateStr, text, persist)
 	}
 
 	// finalize runs the final transcription, emits/pastes it, clears the
