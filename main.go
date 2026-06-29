@@ -314,6 +314,9 @@ func run() {
 	// pauseCh carries in-app 'p' key presses to the main loop, which toggles
 	// the paused state without finalizing.
 	pauseCh := make(chan struct{}, 1)
+	// deleteCh carries in-app 'd' key presses to the main loop, which discards
+	// the current session (text, audio buffer) without finalizing or pasting.
+	deleteCh := make(chan struct{}, 1)
 
 	// tStart is captured before the setup goroutines below so that the first
 	// loop iteration sees the full setup time elapsed (matching the original
@@ -326,7 +329,7 @@ func run() {
 	initScreen()
 	defer screen.Fini()
 
-	startScreenPoller(&isRunning, pauseCh)
+	startScreenPoller(&isRunning, pauseCh, deleteCh)
 
 	var initialState appState
 	if cli.SkipPauseMode {
@@ -340,7 +343,7 @@ func run() {
 	printStatus(initialState.String())
 	screen.Show()
 
-	runMainLoop(&isRunning, mic, ctx, ctx2, wparams, params, tStart, hotkeyCh, pauseCh, initialState, cli.SkipPauseMode, clipErr)
+	runMainLoop(&isRunning, mic, ctx, ctx2, wparams, params, tStart, hotkeyCh, pauseCh, deleteCh, initialState, cli.SkipPauseMode, clipErr)
 
 	// os.Exit skips defers, so restore the terminal explicitly before exiting.
 	if screen != nil {
@@ -569,8 +572,9 @@ func initScreen() {
 
 // startScreenPoller runs a goroutine that watches tcell events. Pressing 'q'
 // quits the app; pressing 'p' (or 'P') signals pauseCh so the main loop can
-// toggle the paused state.
-func startScreenPoller(running *atomic.Bool, pauseCh chan<- struct{}) {
+// toggle the paused state; pressing 'd' (or 'D') signals deleteCh so the main
+// loop can discard the current session without finalizing.
+func startScreenPoller(running *atomic.Bool, pauseCh chan<- struct{}, deleteCh chan<- struct{}) {
 	go func() {
 		for running.Load() {
 			ev := screen.PollEvent()
@@ -584,6 +588,11 @@ func startScreenPoller(running *atomic.Bool, pauseCh chan<- struct{}) {
 					case 'p', 'P':
 						select {
 						case pauseCh <- struct{}{}:
+						default:
+						}
+					case 'd', 'D':
+						select {
+						case deleteCh <- struct{}{}:
 						default:
 						}
 					}
@@ -611,7 +620,7 @@ func startScreenPoller(running *atomic.Bool, pauseCh chan<- struct{}) {
 // It only returns when the running flag flips or a signal is received
 // (terminal 'q', SIGINT/SIGTERM, or SDL-quit), at which point the program
 // exits without finalizing.
-func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Context, ctx2 *transcribe.Context, wparams transcribe.FullParams, p whisperParams, tStart time.Time, hotkeyCh <-chan hotkeyEvt, pauseCh <-chan struct{}, initialState appState, skipPause bool, clipErr error) {
+func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Context, ctx2 *transcribe.Context, wparams transcribe.FullParams, p whisperParams, tStart time.Time, hotkeyCh <-chan hotkeyEvt, pauseCh <-chan struct{}, deleteCh <-chan struct{}, initialState appState, skipPause bool, clipErr error) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
@@ -728,6 +737,20 @@ mainloop:
 				screen.Clear()
 				printStatus(state.String())
 				screen.Show()
+			case <-deleteCh:
+				// Delete via 'd' while paused: discard the preserved session
+				// and any finalized text left on screen, and stay paused. The
+				// mic is already stopped; only the buffers/screen are cleared.
+				mic.Clear()
+				segments = nil
+				holdActive = false
+				now := time.Now()
+				tLast = now
+				tStart = now
+				screen.Clear()
+				printStatus(state.String())
+				screen.Show()
+				logActionf("delete (paused)")
 			case <-time.After(100 * time.Millisecond):
 			}
 			continue mainloop
@@ -770,6 +793,22 @@ mainloop:
 			state = StatePaused
 			printStatus(state.String())
 			screen.Show()
+			continue mainloop
+		case <-deleteCh:
+			// Delete via 'd' while active: discard the current dictation and
+			// keep listening. The mic stays live; only the buffers/screen are
+			// cleared. No finalization, no copy, no paste.
+			mic.Clear()
+			segments = nil
+			holdActive = false
+			now := time.Now()
+			tLast = now
+			tStart = now
+			state = StateListening
+			screen.Clear()
+			printStatus(state.String())
+			screen.Show()
+			logActionf("delete (active)")
 			continue mainloop
 		default:
 		}

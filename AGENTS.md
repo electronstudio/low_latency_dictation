@@ -4,19 +4,7 @@
 Single Go executable: real-time microphone speech-to-text using whisper.cpp (CGO) + SDL2 (CGO).
 
 ## Build
-Compile with `make` using the platform-specific Makefile:
-
-```bash
-make -f Makefile.linux     # Linux
-make -f Makefile.macos     # macOS
-make -f Makefile.windows   # Windows (MSYS2/MinGW)
-```
-
-Output binary: `dictate`.
-
-```bash
-make -f Makefile.linux
-```
+Compile with `make` which then triggers platform-specific Makefile.
 
 ### Platform-specific notes
 

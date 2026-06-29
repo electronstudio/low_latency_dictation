@@ -43,14 +43,18 @@ func show(title, message string, persist bool) error {
 		return fmt.Errorf("toast: not initialized")
 	}
 	urgency := "normal"
+	timeoutMs := 5000
 	if persist {
 		urgency = "critical"
+		timeoutMs = 1000000
 	}
 	args := []string{
 		fmt.Sprintf("--urgency=%s", urgency),
 		"--print-id",
 		fmt.Sprintf("--replace-id=%d", lastID),
+		"--transient",
 		"--app-name=uk.co.electronstudio.dictate.notify",
+		fmt.Sprintf("--expire-time=%d", timeoutMs),
 		title,
 	}
 	if message != "" {
@@ -82,6 +86,9 @@ func show(title, message string, persist bool) error {
 		}
 	} else {
 		logf("toast: no id found in stdout")
+	}
+	if !persist {
+		lastID = 0
 	}
 	return nil
 }
