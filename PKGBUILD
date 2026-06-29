@@ -1,4 +1,4 @@
-# Maintainer: TODO <your-email>
+# Maintainer: Richard Smith <aur@electronstudio.co.uk>
 pkgname=low-latency-dictation-git
 pkgver=0  # placeholder, overwritten by pkgver()
 pkgrel=1
