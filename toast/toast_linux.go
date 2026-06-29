@@ -50,7 +50,7 @@ func show(title, message string, persist bool) error {
 		fmt.Sprintf("--urgency=%s", urgency),
 		"--print-id",
 		fmt.Sprintf("--replace-id=%d", lastID),
-		"--app-name=dictate",
+		"--app-name=uk.co.electronstudio.dictate.notify",
 		title,
 	}
 	if message != "" {

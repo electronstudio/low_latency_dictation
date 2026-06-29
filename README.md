@@ -1,8 +1,18 @@
 # Dictate
 
-A small Go program that does real-time speech-to-text from your microphone. It uses [whisper.cpp](https://github.com/ggerganov/whisper.cpp) under the hood for the actual inference, so all transcription happens locally.
+A small CLI Go program that does real-time speech-to-text from your microphone. It uses [whisper.cpp](https://github.com/ggerganov/whisper.cpp) under the hood for the actual inference, so all transcription happens locally.
 
 ## Building
+
+### Arch (CachyOS, Artix, etc) Linux
+
+```bash
+git clone https://github.com/electronstudio/low_latency_dictation.git
+cd low_latency_dictation
+makepkg -si
+```
+
+### Others
 
 You need Go, a C compiler, SDL2, and the Vulkan headers.
 
@@ -16,7 +26,6 @@ git submodule update --init --recursive
 make
 sudo make install 
 ```
-
 
 ## Requirements
 
