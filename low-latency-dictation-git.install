@@ -1,0 +1,20 @@
+post_install() {
+  cat <<'EOF'
+
+  ==> low-latency-dictation-git requires access to /dev/uinput for
+      simulating keystrokes (paste). Add your user to the uinput group:
+
+          sudo usermod -aG uinput "$USER"
+
+      Then reboot for the change to take effect.
+
+  ==> Whisper models are downloaded automatically on first run to
+      ~/.cache/low_latency_dictation/. Use --quality-preset low if you
+      have no GPU. See: dictate --help
+
+EOF
+}
+
+post_upgrade() {
+  post_install
+}

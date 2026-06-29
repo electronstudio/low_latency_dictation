@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/base64"
 	"fmt"
 	"log"
@@ -23,6 +24,9 @@ import (
 	"golang.design/x/clipboard"
 	"golang.design/x/hotkey/mainthread"
 )
+
+//go:embed VERSION
+var versionString string
 
 type CLI struct {
 	Model         string  `arg:"-m,--model" default:"ggml-tiny.en-q8_0.bin" help:"Model for real-time transcription, e.g. ggml-medium-q5_0.bin"`
@@ -61,7 +65,7 @@ type CLI struct {
 // suggested improvements, concurrency bug,
 
 func (CLI) Version() string {
-	return "low_latency_dictation 0.1.0"
+	return "low_latency_dictation " + strings.TrimSpace(versionString)
 }
 
 type whisperParams struct {
