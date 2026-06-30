@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="console-application">
+  <id>uk.co.electronstudio.Dictate</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <name>Dictate</name>
+  <summary>Real-time microphone speech-to-text using whisper.cpp</summary>
+  <description>
+    <p>A small CLI program that does real-time speech-to-text from your microphone. It uses whisper.cpp under the hood for the actual inference, so all transcription happens locally on your machine.</p>
+    <p>A lower quality model transcribes your dictation in real time. When you finish, a higher quality model processes the full audio, copies the text to the clipboard, and pastes it into the current application.</p>
+  </description>
+  <launchable type="desktop-id">uk.co.electronstudio.Dictate.desktop</launchable>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+    <category>Utility</category>
+  </categories>
+  <keywords>
+    <keyword>speech</keyword>
+    <keyword>dictation</keyword>
+    <keyword>transcription</keyword>
+    <keyword>whisper</keyword>
+    <keyword>voice</keyword>
+  </keywords>
+  <url type="homepage">https://github.com/electronstudio/low_latency_dictation</url>
+  <url type="bugtracker">https://github.com/electronstudio/low_latency_dictation/issues</url>
+  <provides>
+    <binary>dictate</binary>
+  </provides>
+  <releases>
+    <release version="0.2.1" date="2026-06-29"/>
+  </releases>
+</component>

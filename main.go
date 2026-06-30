@@ -964,7 +964,7 @@ func emitFinal(finalText string, clipErr error) {
 	if err := typing.Paste(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not auto-paste: %v\n", err)
 		fmt.Fprintf(os.Stderr, "warning: text is on the clipboard; paste manually with Ctrl/Cmd+V\n")
-		die(1, "paste failed: %v", err)
+		logActionf("paste failed: %v", err)
 	} else {
 		logActionf("paste ok")
 	}

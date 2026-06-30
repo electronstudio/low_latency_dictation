@@ -11,12 +11,12 @@ import (
 const baseURL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
 
 func resolveModelFile(modelName string) (string, error) {
-	home, err := os.UserHomeDir()
+	cacheBase, err := os.UserCacheDir()
 	if err != nil {
-		return "", fmt.Errorf("failed to get home directory: %w", err)
+		return "", fmt.Errorf("failed to get cache directory: %w", err)
 	}
 
-	cacheDir := filepath.Join(home, ".cache", "low_latency_dictation")
+	cacheDir := filepath.Join(cacheBase, "low_latency_dictation")
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create cache directory %s: %w", cacheDir, err)
 	}
