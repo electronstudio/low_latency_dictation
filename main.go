@@ -19,6 +19,7 @@ import (
 	"github.com/electronstudio/low_latency_dictation/hotkey"
 	"github.com/electronstudio/low_latency_dictation/toast"
 	"github.com/electronstudio/low_latency_dictation/transcribe"
+	"github.com/electronstudio/low_latency_dictation/tray"
 	"github.com/electronstudio/low_latency_dictation/typing"
 	"github.com/electronstudio/low_latency_dictation/vad"
 	"github.com/gdamore/tcell/v2"
@@ -47,7 +48,8 @@ type CLI struct {
 	VadThold      float32 `arg:"--vad-thold"         default:"0.8"                   help:"(ADVANCED: VAD threshold)"`
 	FreqThold     float32 `arg:"--freq-thold"        default:"100.0"                 help:"(ADVANCED: High-pass filter cutoff)"`
 	Language      string  `arg:"--lang"              default:"en"                    help:"(ADVANCED: Language code)"`
-	FlashAttn     bool    `arg:"--flash-attn"        default:"true"                  help:"(ADVANCED: Use flash attention)"`
+	FlashAttn     bool    `arg:"--flash-attn"         default:"true"                  help:"(ADVANCED: Use flash attention)"`
+	NoTray        bool    `arg:"--no-tray"            default:"false"                 help:"Disable the system tray icon"`
 }
 
 // TODO: remove LEngthMS?
@@ -181,6 +183,9 @@ func printWrapped(x, y, maxWidth, maxLines int, style tcell.Style, text string) 
 }
 
 func printStatus(status string) {
+	if tr != nil {
+		tr.SetState(status)
+	}
 	if screenHeight < 1 {
 		return
 	}
@@ -192,6 +197,9 @@ func printStatus(status string) {
 }
 
 func die(code int, format string, args ...interface{}) {
+	if tr != nil {
+		tr.Quit()
+	}
 	if screen != nil {
 		screen.Fini()
 	}
@@ -207,6 +215,7 @@ var (
 	finalizingStyle = tcell.StyleDefault.Foreground(tcell.ColorRed)
 	finalizedStyle  = tcell.StyleDefault.Foreground(tcell.ColorGreen)
 	logger          *log.Logger
+	tr              *tray.Tray
 
 	// hotkeyLabel is the human-readable stop key combo shown in the status
 	// line. Defaults to "any key" (the foreground terminal key) and is
@@ -282,6 +291,21 @@ func run() {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 
+	// Start the system tray icon (unless --no-tray). It is best-effort: if the
+	// platform has no tray host the icon simply does not appear but the app
+	// keeps running. The initial state mirrors the startup state below.
+	if !cli.NoTray {
+		initialStateName := "PAUSED"
+		if cli.SkipPauseMode {
+			initialStateName = "LISTENING"
+		}
+		if t, err := tray.Start(mainthread.Call, iconForState, initialStateName); err == nil {
+			tr = t
+		} else {
+			logActionf("tray disabled: %v", err)
+		}
+	}
+
 	transcribe.BackendLoadAll()
 
 	logActionf("=== startup ===")
@@ -344,9 +368,18 @@ func run() {
 	printStatus(initialState.String())
 	screen.Show()
 
-	runMainLoop(&isRunning, mic, ctx, ctx2, wparams, params, tStart, hotkeyCh, pauseCh, deleteCh, initialState, cli.SkipPauseMode, clipErr)
+	var trayCh <-chan tray.Event
+	if tr != nil {
+		trayCh = tr.Events
+	}
 
-	// os.Exit skips defers, so restore the terminal explicitly before exiting.
+	runMainLoop(&isRunning, mic, ctx, ctx2, wparams, params, tStart, hotkeyCh, pauseCh, deleteCh, trayCh, initialState, cli.SkipPauseMode, clipErr)
+
+	// os.Exit skips defers, so restore the terminal and tray explicitly before
+	// exiting.
+	if tr != nil {
+		tr.Quit()
+	}
 	if screen != nil {
 		screen.Fini()
 	}
@@ -625,7 +658,7 @@ func startScreenPoller(running *atomic.Bool, pauseCh chan<- struct{}, deleteCh c
 // It only returns when the running flag flips or a signal is received
 // (terminal 'q', SIGINT/SIGTERM, or SDL-quit), at which point the program
 // exits without finalizing.
-func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Context, ctx2 *transcribe.Context, wparams transcribe.FullParams, p whisperParams, tStart time.Time, hotkeyCh <-chan hotkeyEvt, pauseCh <-chan struct{}, deleteCh <-chan struct{}, initialState appState, skipPause bool, clipErr error) {
+func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Context, ctx2 *transcribe.Context, wparams transcribe.FullParams, p whisperParams, tStart time.Time, hotkeyCh chan hotkeyEvt, pauseCh <-chan struct{}, deleteCh chan struct{}, trayCh <-chan tray.Event, initialState appState, skipPause bool, clipErr error) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
@@ -700,6 +733,36 @@ func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Co
 		}
 	}
 
+	// handleTray dispatches a tray event into the existing input channels. The
+	// toggle is delivered as a synthesized hotkey tap (keydown then keyup) so it
+	// reuses the exact hotkey logic: when paused it starts a fresh session,
+	// when active it finalizes and pastes. Sends are non-blocking to avoid
+	// stalling the loop (the only consumer of these channels); in practice the
+	// channels are drained every iteration so nothing drops.
+	handleTray := func(evt tray.Event) {
+		switch evt {
+		case tray.EventToggle:
+			now := time.Now()
+			select {
+			case hotkeyCh <- hotkeyEvt{down: true, t: now}:
+			default:
+			}
+			select {
+			case hotkeyCh <- hotkeyEvt{down: false, t: now}:
+			default:
+			}
+		case tray.EventDelete:
+			select {
+			case deleteCh <- struct{}{}:
+			default:
+			}
+		case tray.EventAbout:
+			toast.Show("low_latency_dictation", strings.TrimSpace(versionString), false)
+		case tray.EventQuit:
+			running.Store(false)
+		}
+	}
+
 mainloop:
 	for running.Load() {
 		// Paused: mic is stopped, session preserved. Wait for input or a
@@ -756,6 +819,8 @@ mainloop:
 				printStatus(state.String())
 				screen.Show()
 				logActionf("delete (paused)")
+			case evt := <-trayCh:
+				handleTray(evt)
 			case <-time.After(100 * time.Millisecond):
 			}
 			continue mainloop
@@ -814,6 +879,9 @@ mainloop:
 			printStatus(state.String())
 			screen.Show()
 			logActionf("delete (active)")
+			continue mainloop
+		case evt := <-trayCh:
+			handleTray(evt)
 			continue mainloop
 		default:
 		}

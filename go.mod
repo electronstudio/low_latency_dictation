@@ -3,6 +3,7 @@ module github.com/electronstudio/low_latency_dictation
 go 1.24
 
 require (
+	fyne.io/systray v1.12.2
 	github.com/alexflint/go-arg v1.6.1
 	github.com/gdamore/tcell/v2 v2.7.4
 	github.com/holoplot/go-evdev v0.0.0-20260504100651-66d1748fe847
@@ -14,6 +15,7 @@ require (
 	github.com/alexflint/go-scalar v1.2.0 // indirect
 	github.com/ebitengine/purego v0.10.1 // indirect
 	github.com/gdamore/encoding v1.0.0 // indirect
+	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/mattn/go-runewidth v0.0.15 // indirect
 	github.com/rivo/uniseg v0.4.3 // indirect

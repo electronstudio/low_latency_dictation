@@ -31,3 +31,6 @@ pkg/
 ouput.log
 
 .idea
+
+# Stray git repo from a clone operation
+/low_latency_dictation/
