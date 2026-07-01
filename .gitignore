@@ -22,9 +22,6 @@ models/*.bin
 build-dir/
 .flatpak-builder/
 
-# Go vendored dependencies (regenerate with: go mod vendor)
-vendor/
-
 # Arch package build artifacts
 *.pkg.tar.zst
 src/
