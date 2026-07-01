@@ -122,6 +122,14 @@ var (
 	hotkeyLabel = "q"
 )
 
+// setTrayState updates the system tray icon to reflect the given app state,
+// if a tray is running.
+func setTrayState(state string) {
+	if tr != nil {
+		tr.SetState(state)
+	}
+}
+
 // main runs the program body. On macOS, mainthread.Init hands the real main
 // thread to the NSApplication event loop (required by the global-hotkey
 // backend, which delivers events via a CGEventTap on the main run loop) and
@@ -244,6 +252,7 @@ func run() {
 		}
 	}
 	ui.ShowText("", initialState)
+	setTrayState(initialState.String())
 
 	var trayCh <-chan tray.Event
 	if tr != nil {
@@ -489,13 +498,20 @@ func runMainLoop(running *atomic.Bool, ui UI, mic *audio.AudioAsync, ctx *transc
 		}
 	}
 
+	// setAppState changes the local state and mirrors the new state to the
+	// system tray icon.
+	setAppState := func(newState State) {
+		state = newState
+		setTrayState(state.String())
+	}
+
 	// finalize runs the final transcription, emits/pastes it, clears the
 	// session, and transitions to the post-finalize state (Paused unless
 	// --skip-pause-mode). It assumes the mic is already paused (produceFinal
 	// handles that) and leaves it paused iff the target is Paused.
 	finalize := func(fromTray bool) {
 		start := time.Now()
-		state = StateFinalizing
+		setAppState(StateFinalizing)
 		redrawText(segmentsText(), StateFinalizing)
 
 		finalText := produceFinalText(ui, ctx2, segments, wparams, mic)
@@ -511,13 +527,13 @@ func runMainLoop(running *atomic.Bool, ui UI, mic *audio.AudioAsync, ctx *transc
 			if err := mic.Resume(); err != nil {
 				logActionf("audio resume after finalize failed: %v", err)
 			}
-			state = StateListening
+			setAppState(StateListening)
 			redrawText("", StateListening)
 		} else {
 			// produceFinalText already paused the mic; stay paused. Draw the
 			// finalized text in green and leave it on screen while paused; any
 			// unpause (hotkey or 'p') clears it for the next session.
-			state = StatePaused
+			setAppState(StatePaused)
 			redrawText(finalText, StatePaused)
 		}
 	}
@@ -531,7 +547,7 @@ func runMainLoop(running *atomic.Bool, ui UI, mic *audio.AudioAsync, ctx *transc
 			if err := mic.Resume(); err != nil {
 				logActionf("audio resume on unpause failed: %v", err)
 			}
-			state = StateListening
+			setAppState(StateListening)
 			redrawText("", StateListening)
 		case StateListening, StateDictating:
 			// Pause: preserve the in-flight session.
@@ -539,7 +555,7 @@ func runMainLoop(running *atomic.Bool, ui UI, mic *audio.AudioAsync, ctx *transc
 			if err := mic.Pause(); err != nil {
 				logActionf("audio pause failed: %v", err)
 			}
-			state = StatePaused
+			setAppState(StatePaused)
 			ui.ShowStatus(state.String())
 		}
 	}
@@ -558,7 +574,7 @@ func runMainLoop(running *atomic.Bool, ui UI, mic *audio.AudioAsync, ctx *transc
 			redrawText("", StatePaused)
 			logActionf("delete (paused)")
 		default:
-			state = StateListening
+			setAppState(StateListening)
 			redrawText("", StateListening)
 			logActionf("delete (active)")
 		}
@@ -611,7 +627,7 @@ mainloop:
 					}
 					holdActive = true
 					holdStart = evt.t
-					state = StateListening
+					setAppState(StateListening)
 					redrawText("", StateListening)
 				} else {
 					// keyup while still Paused (e.g. paused again before the
@@ -683,12 +699,12 @@ mainloop:
 		ls := mic.Get(500)
 
 		if !vad.SimpleVAD(ls, transcribe.WhisperSampleRate, 250, p.vadThold, p.freqThold, false) {
-			state = StateListening
+			setAppState(StateListening)
 			ui.ShowStatus(state.String())
 			time.Sleep(16 * time.Millisecond)
 			continue
 		}
-		state = StateDictating
+		setAppState(StateDictating)
 		ui.ShowStatus(state.String())
 		logActionf("vad activated")
 		pcmf32New := mic.Get(p.lengthMs)
