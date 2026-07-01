@@ -38,6 +38,9 @@ const (
 	// starts a fresh dictation session; when listening/dictating it finalizes
 	// and pastes the current session.
 	EventToggle Event = iota
+	// EventPause requests pausing without finalizing (when listening) or
+	// resuming the preserved session (when paused), mirroring the 'p' key.
+	EventPause
 	// EventDelete discards the current session without finalizing.
 	EventDelete
 	// EventAbout asks the caller to show the application name and version.
@@ -54,13 +57,16 @@ const appName = "low_latency_dictation"
 type Tray struct {
 	Events chan Event
 
-	dispatch func(func()) // runs a func on the platform main thread when required
-	iconFor  func(state string) []byte
-	endFn    func()        // shutdown func (RunWithExternalLoop's end); nil on windows
-	ready    chan struct{} // closed once onReady has built the menu
-	mu       sync.Mutex
-	state    string
-	toggle   *systray.MenuItem
+	dispatch  func(func()) // runs a func on the platform main thread when required
+	iconFor   func(state string) []byte
+	endFn     func()        // shutdown func (RunWithExternalLoop's end); nil on windows
+	ready     chan struct{} // closed once onReady has built the menu
+	mu        sync.Mutex
+	state     string
+	dictation *systray.MenuItem
+	dictText  string
+	toggle    *systray.MenuItem
+	pause     *systray.MenuItem
 }
 
 // Start creates and registers the tray icon and returns it. dispatch runs the
@@ -111,6 +117,57 @@ func (t *Tray) SetState(state string) {
 	if t.toggle != nil {
 		t.toggle.SetTitle(toggleTitle(state))
 	}
+	if t.pause != nil {
+		t.pause.SetTitle(pauseTitle(state))
+	}
+}
+
+// SetDictationText updates the disabled menu item at the top of the menu that
+// shows a live preview of the current dictation text. An empty text hides the
+// item; non-empty text is word-wrapped at 80 characters and shown.
+// Redundant updates (same text as last call) are dropped to avoid unnecessary
+// DBus traffic.
+func (t *Tray) SetDictationText(text string) {
+	<-t.ready
+	text = wrapWords(strings.TrimSpace(strings.ReplaceAll(text, "\n", " ")), 80)
+	t.mu.Lock()
+	if t.dictText == text {
+		t.mu.Unlock()
+		return
+	}
+	t.dictText = text
+	t.mu.Unlock()
+
+	if text == "" {
+		t.dictation.Hide()
+	} else {
+		t.dictation.SetTitle(text)
+		t.dictation.Show()
+	}
+}
+
+// wrapWords word-waps text at the given line width, breaking on word
+// boundaries. A single space between words is preserved within a line; a
+// newline is inserted where a break occurs.
+func wrapWords(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+	var sb strings.Builder
+	lineLen := 0
+	for _, word := range strings.Fields(text) {
+		if lineLen > 0 && lineLen+1+len(word) > width {
+			sb.WriteByte('\n')
+			lineLen = 0
+		}
+		if lineLen > 0 {
+			sb.WriteByte(' ')
+			lineLen++
+		}
+		sb.WriteString(word)
+		lineLen += len(word)
+	}
+	return sb.String()
 }
 
 // toggleTitle returns the menu label for the toggle item in the given state:
@@ -132,6 +189,17 @@ func toggleTitle(state string) string {
 	return label
 }
 
+// pauseTitle returns the menu label for the pause item in the given state:
+// "Pause" when listening/dictating, "Resume" when paused.
+func pauseTitle(state string) string {
+	switch state {
+	case "PAUSED":
+		return "Resume"
+	default: // LISTENING, DICTATING, FINALIZING
+		return "Pause"
+	}
+}
+
 // onReady builds the menu and installs the click handlers. It is invoked by
 // the systray library on a separate goroutine once the platform tray is ready.
 func (t *Tray) onReady() {
@@ -140,7 +208,12 @@ func (t *Tray) onReady() {
 	systray.SetIcon(t.iconFor(t.state))
 	systray.SetTooltip(appName + " — " + t.state)
 
+	t.dictation = systray.AddMenuItem("", "Current dictation text")
+	t.dictation.Disable()
+	t.dictation.Hide()
+
 	t.toggle = systray.AddMenuItem(toggleTitle(t.state), "Start/stop dictation (same as the global hotkey)")
+	t.pause = systray.AddMenuItem(pauseTitle(t.state), "Pause/resume dictation (same as the 'p' key)")
 	systray.AddSeparator()
 	mDelete := systray.AddMenuItem("Delete session", "Discard the current dictation without finalizing")
 	mAbout := systray.AddMenuItem("About", "Show the application name and version")
@@ -151,6 +224,7 @@ func (t *Tray) onReady() {
 	// ItemIsMenu is false; a right-click shows this menu on every platform
 	// (the secondary handler is unset, so each falls back to show_menu).
 	go t.forward(t.toggle, EventToggle)
+	go t.forward(t.pause, EventPause)
 	go t.forward(mDelete, EventDelete)
 	go t.forward(mAbout, EventAbout)
 	go t.forward(mQuit, EventQuit)

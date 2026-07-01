@@ -58,7 +58,6 @@ type CLI struct {
 // do whole buffer rather than circular buffer, or at least larger circle
 // option to adjust interval
 // option to disable VAD
-// recommended options for high, low systems
 // escape to delete, escape again to quit. C to copy.  enter to exit and copy.
 // colors?
 // word timings?
@@ -66,6 +65,7 @@ type CLI struct {
 // resident daemon?
 // split front and backend.  network?
 // suggested improvements, concurrency bug,
+// toast on start even when no text dictated?
 
 func (CLI) Version() string {
 	return "low_latency_dictation " + strings.TrimSpace(versionString)
@@ -127,8 +127,9 @@ func (s appState) String() string {
 // main loop. t is stamped by the forwarder at receive time so the main loop
 // can measure hold duration accurately regardless of its own polling latency.
 type hotkeyEvt struct {
-	down bool
-	t    time.Time
+	down     bool
+	t        time.Time
+	fromTray bool
 }
 
 // holdThreshold is the minimum key-down duration for the hold-to-finalize
@@ -136,6 +137,13 @@ type hotkeyEvt struct {
 // state finalizes on release (push-to-talk); a shorter tap just unpauses and
 // keeps listening.
 const holdThreshold = 200 * time.Millisecond
+
+// trayFocusDelay is the minimum time to wait after a tray-initiated finalize
+// before simulating the paste keystroke. A tray double-click briefly grabs
+// keyboard focus in the top bar; this delay lets focus return to the target
+// window so the Ctrl+V reaches the right application. Time already spent in
+// finalization is subtracted so the total wait is never more than this.
+const trayFocusDelay = 200 * time.Millisecond
 
 func printToScreen(x, y int, style tcell.Style, text string) {
 	for i, r := range text {
@@ -658,7 +666,7 @@ func startScreenPoller(running *atomic.Bool, pauseCh chan<- struct{}, deleteCh c
 // It only returns when the running flag flips or a signal is received
 // (terminal 'q', SIGINT/SIGTERM, or SDL-quit), at which point the program
 // exits without finalizing.
-func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Context, ctx2 *transcribe.Context, wparams transcribe.FullParams, p whisperParams, tStart time.Time, hotkeyCh chan hotkeyEvt, pauseCh <-chan struct{}, deleteCh chan struct{}, trayCh <-chan tray.Event, initialState appState, skipPause bool, clipErr error) {
+func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Context, ctx2 *transcribe.Context, wparams transcribe.FullParams, p whisperParams, tStart time.Time, hotkeyCh chan hotkeyEvt, pauseCh chan struct{}, deleteCh chan struct{}, trayCh <-chan tray.Event, initialState appState, skipPause bool, clipErr error) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
@@ -692,23 +700,29 @@ func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Co
 		printWrapped(0, 0, screenWidth, screenHeight-1, style, strings.TrimSpace(text))
 		printStatus(stateStr)
 		screen.Show()
+		if tr != nil {
+			tr.SetDictationText(text)
+		}
 		var persist = true
 		if state == StatePaused {
 			persist = false
 		}
-		toast.Show(stateStr, text, persist)
+		if strings.TrimSpace(text) != "" {
+			toast.Show(stateStr, text, persist)
+		}
 	}
 
 	// finalize runs the final transcription, emits/pastes it, clears the
 	// session, and transitions to the post-finalize state (Paused unless
 	// --skip-pause-mode). It assumes the mic is already paused (produceFinal
 	// handles that) and leaves it paused iff the target is Paused.
-	finalize := func() {
+	finalize := func(fromTray bool) {
+		start := time.Now()
 		state = StateFinalizing
 		redrawText(segmentsText(), finalizingStyle, state.String())
 
 		finalText := produceFinalText(ctx2, segments, wparams, mic)
-		emitFinal(finalText, clipErr)
+		emitFinal(finalText, clipErr, fromTray, start)
 		drainInput(hotkeyCh, pauseCh)
 
 		mic.Clear()
@@ -721,9 +735,7 @@ func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Co
 				logActionf("audio resume after finalize failed: %v", err)
 			}
 			state = StateListening
-			screen.Clear()
-			printStatus(state.String())
-			screen.Show()
+			redrawText("", tcell.StyleDefault, state.String())
 		} else {
 			// produceFinalText already paused the mic; stay paused. Draw the
 			// finalized text in green and leave it on screen while paused; any
@@ -744,16 +756,21 @@ func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Co
 		case tray.EventToggle:
 			now := time.Now()
 			select {
-			case hotkeyCh <- hotkeyEvt{down: true, t: now}:
+			case hotkeyCh <- hotkeyEvt{down: true, t: now, fromTray: true}:
 			default:
 			}
 			select {
-			case hotkeyCh <- hotkeyEvt{down: false, t: now}:
+			case hotkeyCh <- hotkeyEvt{down: false, t: now, fromTray: true}:
 			default:
 			}
 		case tray.EventDelete:
 			select {
 			case deleteCh <- struct{}{}:
+			default:
+			}
+		case tray.EventPause:
+			select {
+			case pauseCh <- struct{}{}:
 			default:
 			}
 		case tray.EventAbout:
@@ -787,9 +804,7 @@ mainloop:
 					holdActive = true
 					holdStart = evt.t
 					state = StateListening
-					screen.Clear()
-					printStatus(state.String())
-					screen.Show()
+					redrawText("", tcell.StyleDefault, state.String())
 				} else {
 					// keyup while still Paused (e.g. paused again before the
 					// release): just disarm; nothing to finalize.
@@ -802,9 +817,7 @@ mainloop:
 					logActionf("audio resume on unpause failed: %v", err)
 				}
 				state = StateListening
-				screen.Clear()
-				printStatus(state.String())
-				screen.Show()
+				redrawText("", tcell.StyleDefault, state.String())
 			case <-deleteCh:
 				// Delete via 'd' while paused: discard the preserved session
 				// and any finalized text left on screen, and stay paused. The
@@ -815,9 +828,7 @@ mainloop:
 				now := time.Now()
 				tLast = now
 				tStart = now
-				screen.Clear()
-				printStatus(state.String())
-				screen.Show()
+				redrawText("", tcell.StyleDefault, state.String())
 				logActionf("delete (paused)")
 			case evt := <-trayCh:
 				handleTray(evt)
@@ -835,7 +846,7 @@ mainloop:
 				// Keydown while active (not an armed hold) finalizes the
 				// current session, matching the original toggle behavior.
 				if !holdActive {
-					finalize()
+					finalize(evt.fromTray)
 				}
 				// A second keydown during an armed hold is ignored; only the
 				// release decides whether to submit.
@@ -846,7 +857,7 @@ mainloop:
 					holdActive = false
 					if held >= holdThreshold {
 						logActionf("hold finalized after %dms", held.Milliseconds())
-						finalize()
+						finalize(evt.fromTray)
 					} else {
 						logActionf("hold released after %dms (tap, keep listening)", held.Milliseconds())
 					}
@@ -875,9 +886,7 @@ mainloop:
 			tLast = now
 			tStart = now
 			state = StateListening
-			screen.Clear()
-			printStatus(state.String())
-			screen.Show()
+			redrawText("", tcell.StyleDefault, state.String())
 			logActionf("delete (active)")
 			continue mainloop
 		case evt := <-trayCh:
@@ -1028,7 +1037,7 @@ func tryWlCopy(text string) error {
 // data-source), so we linger briefly afterwards to let the target application
 // read it; macOS and Windows copy into the OS clipboard and the keystroke is
 // already queued, so no linger is needed there.
-func emitFinal(finalText string, clipErr error) {
+func emitFinal(finalText string, clipErr error, fromTray bool, start time.Time) {
 	if f, err := os.OpenFile("/dev/clipboard", os.O_WRONLY|os.O_TRUNC, 0); err == nil {
 		_, _ = f.WriteString(finalText)
 		_ = f.Close()
@@ -1051,6 +1060,12 @@ func emitFinal(finalText string, clipErr error) {
 		seq = fmt.Sprintf("\033]52;c;%s\007", data)
 	}
 	fmt.Print(seq)
+
+	if fromTray {
+		if remaining := trayFocusDelay - time.Since(start); remaining > 0 {
+			time.Sleep(remaining)
+		}
+	}
 
 	if err := typing.Paste(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not auto-paste: %v\n", err)
