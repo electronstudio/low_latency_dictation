@@ -13,18 +13,18 @@ import (
 
 var errUinputPermission = errors.New("typing: permission denied opening /dev/uinput")
 
-// Paste simulates a Ctrl+V keystroke by creating a transient uinput virtual
-// keyboard, emitting the key sequence, and destroying the device. It works
-// under both X11 and Wayland (and from a TTY) but requires write access to
-// /dev/uinput (see errUinputPermission).
-func Paste() error {
-	dev, err := evdev.CreateDevice(
-		"low_latency_dictation",
-		evdev.InputID{BusType: 0x03, Vendor: 0x1, Product: 0x1, Version: 1},
-		map[evdev.EvType][]evdev.EvCode{
-			evdev.EV_KEY: {evdev.KEY_LEFTCTRL, evdev.KEY_V},
-		},
-	)
+// pasteDevice is the persistent virtual keyboard used for all paste
+// operations. It is created once by Init and closed by Close.
+var pasteDevice *evdev.InputDevice
+
+// Init creates the persistent uinput virtual keyboard. On Linux this must be
+// called once before the first Paste; on other platforms it is a no-op.
+func Init() error {
+	if pasteDevice != nil {
+		return nil
+	}
+
+	dev, err := createPasteDevice()
 	if err != nil {
 		if errors.Is(err, syscall.EACCES) {
 			return fmt.Errorf(
@@ -38,13 +38,51 @@ func Paste() error {
 		}
 		return fmt.Errorf("typing: could not create virtual keyboard: %w", err)
 	}
-	// Destroy the device before closing its file descriptor (defers run LIFO).
-	defer dev.Close()
-	defer evdev.DestroyDevice(dev)
+
+	pasteDevice = dev
+	return nil
+}
+
+// createPasteDevice opens /dev/uinput and registers a virtual keyboard with
+// the minimum keys needed for Ctrl+V. It sleeps briefly after creation so the
+// display server has time to attach to the new device.
+func createPasteDevice() (*evdev.InputDevice, error) {
+	dev, err := evdev.CreateDevice(
+		"low_latency_dictation",
+		evdev.InputID{BusType: 0x03, Vendor: 0x1, Product: 0x1, Version: 1},
+		map[evdev.EvType][]evdev.EvCode{
+			evdev.EV_KEY: {evdev.KEY_LEFTCTRL, evdev.KEY_V},
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
 
 	// Give the display server time to attach to the newly created device so
 	// the first events are not lost.
 	time.Sleep(80 * time.Millisecond)
+	return dev, nil
+}
+
+// Close tears down the persistent virtual keyboard, if any.
+func Close() {
+	if pasteDevice == nil {
+		return
+	}
+	_ = evdev.DestroyDevice(pasteDevice)
+	_ = pasteDevice.Close()
+	pasteDevice = nil
+}
+
+// Paste simulates a Ctrl+V keystroke using the persistent uinput virtual
+// keyboard. It works under both X11 and Wayland (and from a TTY) but requires
+// write access to /dev/uinput (see errUinputPermission).
+func Paste() error {
+	if pasteDevice == nil {
+		if err := Init(); err != nil {
+			return err
+		}
+	}
 
 	// Ctrl down, V down, V up, Ctrl up. Each key event is followed by a
 	// SYN_REPORT so the kernel delivers it as a complete frame.
@@ -59,7 +97,7 @@ func Paste() error {
 	}
 	for _, s := range seq {
 		tv := syscall.NsecToTimeval(time.Now().UnixNano())
-		if err := dev.WriteOne(&evdev.InputEvent{
+		if err := pasteDevice.WriteOne(&evdev.InputEvent{
 			Time:  tv,
 			Type:  evdev.EV_KEY,
 			Code:  s.code,
@@ -67,7 +105,7 @@ func Paste() error {
 		}); err != nil {
 			return fmt.Errorf("typing: failed to write key event: %w", err)
 		}
-		if err := dev.WriteOne(&evdev.InputEvent{
+		if err := pasteDevice.WriteOne(&evdev.InputEvent{
 			Time:  tv,
 			Type:  evdev.EV_SYN,
 			Code:  evdev.SYN_REPORT,
@@ -78,7 +116,5 @@ func Paste() error {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	// Let the events flush before the device is torn down.
-	time.Sleep(40 * time.Millisecond)
 	return nil
 }

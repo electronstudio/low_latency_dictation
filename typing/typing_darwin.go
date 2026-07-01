@@ -61,6 +61,12 @@ import "C"
 
 import "fmt"
 
+// Init is a no-op on macOS; paste is handled via CoreGraphics on demand.
+func Init() error { return nil }
+
+// Close is a no-op on macOS.
+func Close() {}
+
 // Paste simulates a Cmd+V keystroke via CoreGraphics. It requires macOS
 // Accessibility permission (System Settings, Privacy & Security, Accessibility).
 func Paste() error {

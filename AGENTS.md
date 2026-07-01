@@ -47,7 +47,7 @@ Packages under `main`:
 - `transcribe/` — thin Go wrappers around the whisper.cpp C API
 - `hotkey/` — cross-platform global hotkey (evdev on Linux, golang.design/x/hotkey on macOS/Windows)
 - `toast/` — transient system notifications (Linux notify-send; stubs on macOS/Windows)
-- `typing/` — simulated paste keystroke (uinput on Linux, CoreGraphics on macOS, SendInput on Windows)
+- `typing/` — simulated paste keystroke (uinput on Linux, CoreGraphics on macOS, SendInput on Windows). Call `Init()` once at startup and `Close()` on exit; the Linux uinput device is created once and reused.
 - `tray/` — optional system tray icon via fyne.io/systray
 
 ## Runtime

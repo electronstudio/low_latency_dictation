@@ -165,6 +165,11 @@ func run() {
 
 	clipErr := initClipboard()
 
+	if err := typing.Init(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	}
+	defer typing.Close()
+
 	if err := toast.Init(logger); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}

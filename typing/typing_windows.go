@@ -40,6 +40,12 @@ var (
 	procSendInput = modUser32.NewProc("SendInput")
 )
 
+// Init is a no-op on Windows; paste is handled via SendInput on demand.
+func Init() error { return nil }
+
+// Close is a no-op on Windows.
+func Close() {}
+
 // Paste simulates a Ctrl+V keystroke via the SendInput API.
 func Paste() error {
 	inputs := []tagINPUT{
