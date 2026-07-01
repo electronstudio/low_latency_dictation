@@ -3,24 +3,6 @@
 This file captures the improvement, refactoring, and simplification ideas
 identified during a full read-through of the non-vendor source tree.
 
-## 1. `main.go`: reduce globals and split the state machine
-
-- Introduce an `App` struct that owns CLI params, audio, whisper contexts,
-  tcell screen, tray, logger, and state-machine fields.
-- Convert free functions (`initAudio`, `loadContexts`, `registerGlobalHotkey`,
-  `initScreen`, `startScreenPoller`, `runMainLoop`, `produceFinalText`,
-  `emitFinal`, `startSDLPoller`) into `App` methods or small collaborators.
-- Return errors from helpers and let `run()` handle `die()` centrally instead
-  of calling `os.Exit(1)` from deep in the call stack.
-- Split `runMainLoop` into smaller methods: `handlePausedEvent`,
-  `handleActiveEvent`, `transcribeTick`, `finalize`, `redrawText`.
-- Move the state-machine closures (`segmentsText`, `redrawText`, `finalize`,
-  `handleTray`) out of `runMainLoop`.
-- Tie the global-hotkey forwarder goroutine to the `App` lifecycle so it is
-  stopped on shutdown instead of leaking.
-- Remove the large TODO comment block at the top of the file; migrate
-  actionable items to issues or a dedicated TODO file.
-
 ## 2. Fix TUI rendering for non-ASCII text
 
 - `printToScreen` uses byte index `i` as column offset; use

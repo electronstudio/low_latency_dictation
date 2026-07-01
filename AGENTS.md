@@ -33,7 +33,7 @@ Compile with `make`, which detects the host platform and delegates to one of the
 Module: `github.com/electronstudio/low_latency_dictation`
 
 Top-level package `main`:
-- `main.go` — event loop, signal/hotkey handling, transcription output
+- `main.go` — `App` struct and orchestration (setup, state machine, cleanup)
 - `logging.go` — action logger, whisper log sink, and log setup helpers
 - `model.go` — model download/caching with SHA-1 verification
 - `state.go` — `State` enum, `Segment` type, and `String()` formatting
