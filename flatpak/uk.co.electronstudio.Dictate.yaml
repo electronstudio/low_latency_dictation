@@ -68,6 +68,7 @@ modules:
         commit: 3e9b7d0fef3528ee2208da3cdb873a2c53d2ae2f
         dest: whisper.cpp
     build-commands:
+      - go mod vendor
       - make -f Makefile.linux GGML_VULKAN=ON
       - install -Dm755 dictate /app/bin/dictate
       - install -Dm644 flatpak/uk.co.electronstudio.Dictate.desktop /app/share/applications/uk.co.electronstudio.Dictate.desktop
