@@ -177,7 +177,7 @@ jobs:
       - name: Install flatpak
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y flatpak flatpak-builder
+          sudo apt-get install -y flatpak flatpak-builder appstream
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y flathub \
             org.freedesktop.Platform//25.08 \
