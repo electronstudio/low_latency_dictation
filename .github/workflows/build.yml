@@ -186,7 +186,7 @@ jobs:
 
       - name: Build flatpak
         run: |
-          flatpak-builder --user --repo repo --force-clean flatpak/uk.co.electronstudio.Dictate.yaml
+          flatpak-builder --user --repo repo --force-clean build-dir flatpak/uk.co.electronstudio.Dictate.yaml
           flatpak build-bundle repo low_latency_dictation.flatpak uk.co.electronstudio.Dictate
 
       - name: Upload bundle
