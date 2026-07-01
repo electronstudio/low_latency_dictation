@@ -1,5 +1,4 @@
 //go:build vulkan
-// +build vulkan
 
 package transcribe
 
