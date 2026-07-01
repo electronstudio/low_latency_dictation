@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"runtime"
 	"strings"
@@ -558,6 +559,10 @@ func initScreen() {
 	var err error
 	screen, err = tcell.NewScreen()
 	if err != nil {
+		os.Setenv("TERM", "xterm-256color")
+		screen, err = tcell.NewScreen()
+	}
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "main: failed to create tcell screen: %v\n", err)
 		os.Exit(1)
 	}
@@ -932,6 +937,20 @@ func drainInput(hotkeyCh <-chan hotkeyEvt, pauseCh <-chan struct{}) {
 	}
 }
 
+// tryWlCopy copies text to the Wayland clipboard by shelling out to wl-copy
+// (from wl-clipboard). It is used as a fallback when the Go clipboard package
+// cannot initialise — e.g. on Wayland compositors that lack the data-control
+// protocol (GNOME) and inside the Flatpak sandbox where no X11 display is
+// available. wl-copy uses the standard wl_data_device protocol, which works on
+// all Wayland compositors. By default it forks into the background to serve
+// the clipboard content and the parent exits once the selection is set, so
+// Run returns after the clipboard is ready.
+func tryWlCopy(text string) error {
+	cmd := exec.Command("wl-copy")
+	cmd.Stdin = strings.NewReader(text)
+	return cmd.Run()
+}
+
 // emitFinal offers the transcription through every available channel. The
 // WSL/Cygwin /dev/clipboard and the OSC 52 terminal escape are
 // environment-specific fallbacks that do not depend on the clipboard package;
@@ -949,6 +968,10 @@ func emitFinal(finalText string, clipErr error) {
 	data := base64.StdEncoding.EncodeToString([]byte(finalText))
 	if clipErr == nil {
 		clipboard.Write(clipboard.FmtText, []byte(finalText))
+	} else if err := tryWlCopy(finalText); err != nil {
+		logActionf("wl-copy fallback failed: %v", err)
+	} else {
+		logActionf("wl-copy ok")
 	}
 
 	var seq string

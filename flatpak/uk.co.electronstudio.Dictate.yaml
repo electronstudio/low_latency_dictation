@@ -4,7 +4,7 @@ runtime-version: '25.08'
 sdk: org.freedesktop.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.golang
-command: dictate.sh
+command: dictate
 separate-locales: false
 finish-args:
   - --share=network
@@ -15,12 +15,21 @@ finish-args:
   - --device=all
   - --talk-name=org.freedesktop.Notifications
 build-options:
+  no-debuginfo: true
   append-path: /usr/lib/sdk/golang/bin
   env:
     GOFLAGS: "-buildvcs=false -mod=vendor"
+    GO_LDFLAGS: "-s -w"
     GOCACHE: /run/build/dictate/.gocache
     GOPATH: /run/build/dictate/.gopath
     GOMODCACHE: /run/build/dictate/.gopath/pkg/mod
+cleanup:
+  - /include
+  - /lib/cmake
+  - /share/pkgconfig
+  - /share/man
+  - /share/bash-completion
+  - /share/zsh
 modules:
   - name: spirv-headers
     buildsystem: cmake-ninja
@@ -31,6 +40,15 @@ modules:
         url: https://github.com/KhronosGroup/SPIRV-Headers.git
         tag: vulkan-sdk-1.4.321.0
         commit: 2a611a970fdbc41ac2e3e328802aed9985352dca
+  - name: wl-clipboard
+    buildsystem: meson
+    config-opts:
+      - -Dfishcompletiondir=no
+    sources:
+      - type: git
+        url: https://github.com/bugaevc/wl-clipboard.git
+        tag: v2.3.0
+        commit: 67a7b937895bceec1ae5ccebb10216f63f70ca1b
   - name: dictate
     buildsystem: simple
     sources:
@@ -42,9 +60,9 @@ modules:
           - src
           - pkg
           - libs
-          - ouput.log
           - low_latency_dictation
-          - low-latency-dictation-git-0.2.0.r59.db2cd10-1-x86_64.pkg.tar.zst
+          - build-dir
+          - .flatpak-builder
       - type: git
         url: https://github.com/ggml-org/whisper.cpp.git
         commit: 3e9b7d0fef3528ee2208da3cdb873a2c53d2ae2f
@@ -52,7 +70,6 @@ modules:
     build-commands:
       - make -f Makefile.linux GGML_VULKAN=ON
       - install -Dm755 dictate /app/bin/dictate
-      - install -Dm755 flatpak/dictate.sh /app/bin/dictate.sh
       - install -Dm644 flatpak/uk.co.electronstudio.Dictate.desktop /app/share/applications/uk.co.electronstudio.Dictate.desktop
       - install -Dm644 flatpak/uk.co.electronstudio.Dictate.metainfo.xml /app/share/metainfo/uk.co.electronstudio.Dictate.metainfo.xml
       - install -Dm644 assets/dictate.svg /app/share/icons/hicolor/scalable/apps/uk.co.electronstudio.Dictate.svg
