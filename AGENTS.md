@@ -33,8 +33,12 @@ Compile with `make`, which detects the host platform and delegates to one of the
 Module: `github.com/electronstudio/low_latency_dictation`
 
 Top-level package `main`:
-- `main.go` — TUI, event loop, signal/hotkey handling, transcription output
+- `main.go` — event loop, signal/hotkey handling, transcription output
+- `logging.go` — action logger, whisper log sink, and log setup helpers
 - `model.go` — model download/caching with SHA-1 verification
+- `state.go` — `State` enum, `Segment` type, and `String()` formatting
+- `ui.go` — `UI` interface abstracting terminal/GUI output
+- `tui.go` — tcell-based terminal implementation of `UI`
 - `main_icons_unix.go` / `main_icons_windows.go` — embedded tray icons
 
 Packages under `main`:

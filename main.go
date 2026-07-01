@@ -4,7 +4,6 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -22,7 +21,6 @@ import (
 	"github.com/electronstudio/low_latency_dictation/tray"
 	"github.com/electronstudio/low_latency_dictation/typing"
 	"github.com/electronstudio/low_latency_dictation/vad"
-	"github.com/gdamore/tcell/v2"
 	"golang.design/x/clipboard"
 	"golang.design/x/hotkey/mainthread"
 )
@@ -83,46 +81,6 @@ type whisperParams struct {
 	model     string
 }
 
-// appState is the high-level mode of the main loop. It governs whether the
-// microphone is captured and whether VAD/whisper run. The state is owned by
-// runMainLoop; the separate isRunning atomic signals a quit request.
-type appState int
-
-const (
-	// StatePaused ignores audio: the microphone is paused and the loop waits
-	// for an unpause (hotkey or 'p') or a quit. Entered at startup (unless
-	// --skip-pause-mode), after finalizing (by default), and when the user
-	// presses 'p' mid-session. The current session's accumulated audio and
-	// segments are preserved so unpausing via 'p' can continue the same
-	// dictation; unpausing via the hotkey starts a fresh session.
-	StatePaused appState = iota
-	// StateListening is the normal idle-running mode: the mic is live and VAD
-	// is below threshold.
-	StateListening
-	// StateDictating is the normal active mode: VAD is above threshold and
-	// real-time transcription is running.
-	StateDictating
-	// StateFinalizing processes the final transcription of the current
-	// session, emits/pastes it, then transitions to StatePaused (or
-	// StateListening with --skip-pause-mode).
-	StateFinalizing
-)
-
-func (s appState) String() string {
-	switch s {
-	case StatePaused:
-		return "PAUSED"
-	case StateListening:
-		return "LISTENING"
-	case StateDictating:
-		return "DICTATING"
-	case StateFinalizing:
-		return "FINALIZING"
-	default:
-		return "UNKNOWN"
-	}
-}
-
 // hotkeyEvt carries a global-hotkey keydown/keyup from the forwarder to the
 // main loop. t is stamped by the forwarder at receive time so the main loop
 // can measure hold duration accurately regardless of its own polling latency.
@@ -145,112 +103,24 @@ const holdThreshold = 200 * time.Millisecond
 // finalization is subtracted so the total wait is never more than this.
 const trayFocusDelay = 200 * time.Millisecond
 
-func printToScreen(x, y int, style tcell.Style, text string) {
-	for i, r := range text {
-		screen.SetContent(x+i, y, r, nil, style)
-	}
-}
-
-func printWrapped(x, y, maxWidth, maxLines int, style tcell.Style, text string) {
-	if maxWidth <= 0 || maxLines <= 0 {
-		return
-	}
-
-	var lines []string
-	for len(text) > 0 {
-		if len(text) <= maxWidth {
-			lines = append(lines, text)
-			break
-		}
-
-		cut := maxWidth
-		for i := maxWidth; i > 0; i-- {
-			if text[i] == ' ' {
-				cut = i
-				break
-			}
-		}
-		// If there is no space, break hard.
-		if cut == 0 {
-			cut = maxWidth
-		}
-		lines = append(lines, text[:cut])
-		if text[cut] == ' ' {
-			text = text[cut+1:]
-		} else {
-			text = text[cut:]
-		}
-	}
-
-	if len(lines) > maxLines {
-		lines = lines[len(lines)-maxLines:]
-	}
-	for i, line := range lines {
-		printToScreen(x, y+i, style, line)
-	}
-}
-
-func printStatus(status string) {
-	if tr != nil {
-		tr.SetState(status)
-	}
-	if screenHeight < 1 {
-		return
-	}
-	s := "[" + hotkeyLabel + "] start/end/paste [P]ause [Q]uit [D]elete   <" + status + ">"
-	if screenWidth > len(s) {
-		s += strings.Repeat(" ", screenWidth-len(s))
-	}
-	printToScreen(0, screenHeight-1, statusStyle, s)
-}
-
-func die(code int, format string, args ...interface{}) {
+func die(ui UI, code int, format string, args ...interface{}) {
 	if tr != nil {
 		tr.Quit()
 	}
-	if screen != nil {
-		screen.Fini()
+	if ui != nil {
+		ui.Close()
 	}
 	fmt.Fprintf(os.Stderr, format, args...)
 	os.Exit(code)
 }
 
 var (
-	screen          tcell.Screen
-	screenWidth     int
-	screenHeight    int
-	statusStyle     = tcell.StyleDefault.Reverse(true)
-	finalizingStyle = tcell.StyleDefault.Foreground(tcell.ColorRed)
-	finalizedStyle  = tcell.StyleDefault.Foreground(tcell.ColorGreen)
-	logger          *log.Logger
-	tr              *tray.Tray
+	tr *tray.Tray
 
 	// hotkeyLabel is the human-readable stop key combo shown in the status
-	// line. Defaults to "any key" (the foreground terminal key) and is
 	// replaced by the registered global combo when registration succeeds.
 	hotkeyLabel = "q"
 )
-
-func logActionf(format string, args ...interface{}) {
-	if logger != nil {
-		logger.Printf(format, args...)
-	}
-}
-
-// makeWhisperSink builds the sink handed to transcribe.SetLogSink. When a log
-// file is configured, whisper.cpp lines are written through the same *log.Logger
-// as the app's own actions (with a timestamp, trailing newline trimmed). With no
-// log file, lines go raw to os.Stderr, preserving whisper.cpp's exact format.
-func makeWhisperSink(lg *log.Logger) func(transcribe.LogLevel, string) {
-	if lg != nil {
-		return func(_ transcribe.LogLevel, text string) {
-			lg.Print(strings.TrimRight(text, "\n"))
-		}
-	}
-	return func(_ transcribe.LogLevel, text string) {
-		os.Stderr.WriteString(text)
-	}
-}
 
 // main runs the program body. On macOS, mainthread.Init hands the real main
 // thread to the NSApplication event loop (required by the global-hotkey
@@ -324,11 +194,11 @@ func run() {
 
 	params, wparams := buildParams(cli)
 
-	mic := initAudio(params)
+	mic := initAudio(params, nil)
 	defer mic.Close()
 
 	cp := transcribe.ContextParams{UseGPU: !cli.UseCPU, FlashAttn: cli.FlashAttn}
-	ctx, ctx2 := loadContexts(cli, cp)
+	ctx, ctx2 := loadContexts(cli, cp, nil)
 	defer ctx.Free()
 	if ctx2 != nil {
 		defer ctx2.Free()
@@ -344,27 +214,22 @@ func run() {
 	// on release (push-to-talk). While listening/dictating any keydown
 	// finalizes and emits the current session.
 	hotkeyCh := make(chan hotkeyEvt, 4)
-	// pauseCh carries in-app 'p' key presses to the main loop, which toggles
-	// the paused state without finalizing.
-	pauseCh := make(chan struct{}, 1)
-	// deleteCh carries in-app 'd' key presses to the main loop, which discards
-	// the current session (text, audio buffer) without finalizing or pasting.
-	deleteCh := make(chan struct{}, 1)
 
 	// tStart is captured before the setup goroutines below so that the first
 	// loop iteration sees the full setup time elapsed (matching the original
 	// behavior, where a slow screen init triggers an immediate first fetch).
 	tStart := time.Now()
 
-	registerGlobalHotkey(cli, hotkeyCh)
+	registerGlobalHotkey(cli, hotkeyCh, nil)
 	startSDLPoller(&isRunning)
 
-	initScreen()
-	defer screen.Fini()
+	ui := NewTerminalUI(hotkeyLabel)
+	if err := ui.Init(); err != nil {
+		die(nil, 1, "main: failed to initialize UI: %v\n", err)
+	}
+	defer ui.Close()
 
-	startScreenPoller(&isRunning, pauseCh, deleteCh)
-
-	var initialState appState
+	var initialState State
 	if cli.SkipPauseMode {
 		initialState = StateListening
 	} else {
@@ -373,50 +238,26 @@ func run() {
 			logActionf("audio pause at startup failed: %v", err)
 		}
 	}
-	printStatus(initialState.String())
-	screen.Show()
+	ui.ShowText("", initialState)
 
 	var trayCh <-chan tray.Event
 	if tr != nil {
 		trayCh = tr.Events
 	}
 
-	runMainLoop(&isRunning, mic, ctx, ctx2, wparams, params, tStart, hotkeyCh, pauseCh, deleteCh, trayCh, initialState, cli.SkipPauseMode, clipErr)
+	runMainLoop(&isRunning, ui, mic, ctx, ctx2, wparams, params, tStart, hotkeyCh, trayCh, initialState, cli.SkipPauseMode, clipErr)
 
 	// os.Exit skips defers, so restore the terminal and tray explicitly before
 	// exiting.
 	if tr != nil {
 		tr.Quit()
 	}
-	if screen != nil {
-		screen.Fini()
-	}
+	ui.Close()
 	os.Exit(0)
 }
 
-// openLogFile creates (or appends to) the action log file and wires it to the
-// package-level logger. The caller owns the returned file handle.
-func openLogFile(cli CLI) *os.File {
-	f, err := os.OpenFile(cli.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: failed to open log file: %v\n", err)
-		os.Exit(1)
-	}
-	logger = log.New(f, "", log.LstdFlags)
-	return f
-}
-
-// setupWhisperLogging configures the whisper.cpp log level and sink before any
-// whisper/ggml call so the level filter applies to backend discovery and
-// model-load output.
-func setupWhisperLogging(cli CLI) {
-	transcribe.SetLogLevel(transcribe.ParseLogLevel(cli.LogLevel))
-	transcribe.SetLogSink(makeWhisperSink(logger))
-	transcribe.InstallLogCallback()
-}
-
 // initClipboard initializes the system clipboard backend. If it is unavailable
-// (e.g. no Wayland data-control manager and no X server), the returned error
+// (e.g. no Wayland data-control manager and no X11 server), the returned error
 // is non-nil and the caller keeps running: the transcription is still printed
 // and offered via /dev/clipboard and OSC 52.
 func initClipboard() error {
@@ -474,17 +315,17 @@ func buildParams(cli CLI) (whisperParams, transcribe.FullParams) {
 
 // initAudio opens and resumes the microphone capture. The caller owns the
 // returned *audio.AudioAsync and must Close it.
-func initAudio(p whisperParams) *audio.AudioAsync {
+func initAudio(p whisperParams, ui UI) *audio.AudioAsync {
 	mic := audio.NewAudioAsync(p.lengthMs)
 	if err := mic.Init(p.captureID, transcribe.WhisperSampleRate); err != nil {
 		logActionf("audio init failed: %v", err)
-		die(1, "main: audio.Init() failed: %v\n", err)
+		die(ui, 1, "main: audio.Init() failed: %v\n", err)
 	}
 	logActionf("audio init ok device=%d", p.captureID)
 
 	if err := mic.Resume(); err != nil {
 		logActionf("audio resume failed: %v", err)
-		die(1, "main: audio.Resume() failed: %v\n", err)
+		die(ui, 1, "main: audio.Resume() failed: %v\n", err)
 	}
 	logActionf("audio resume ok")
 	return mic
@@ -494,18 +335,16 @@ func initAudio(p whisperParams) *audio.AudioAsync {
 // whisper context and, unless --final-model is "none", the finalization
 // context. The caller must Free both; ctx2 may be nil when finalization is
 // disabled.
-func loadContexts(cli CLI, cp transcribe.ContextParams) (*transcribe.Context, *transcribe.Context) {
+func loadContexts(cli CLI, cp transcribe.ContextParams, ui UI) (*transcribe.Context, *transcribe.Context) {
 	ctxModelPath, err := resolveModelFile(cli.Model)
 	if err != nil {
 		logActionf("model load failed: %v", err)
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		die(ui, 1, "error: %v\n", err)
 	}
 	ctx, err := transcribe.InitFromFile(ctxModelPath, cp)
 	if err != nil {
 		logActionf("context init failed: %v", err)
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		die(ui, 1, "error: %v\n", err)
 	}
 	logActionf("context init ok model=%s", ctxModelPath)
 
@@ -514,14 +353,12 @@ func loadContexts(cli CLI, cp transcribe.ContextParams) (*transcribe.Context, *t
 		ctx2ModelPath, err := resolveModelFile(cli.FinalModel)
 		if err != nil {
 			logActionf("final model load failed: %v", err)
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			die(ui, 1, "error: %v\n", err)
 		}
 		ctx2, err = transcribe.InitFromFile(ctx2ModelPath, cp)
 		if err != nil {
 			logActionf("final context init failed: %v", err)
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			die(ui, 1, "error: %v\n", err)
 		}
 		logActionf("final context init ok model=%s", ctx2ModelPath)
 	}
@@ -529,22 +366,22 @@ func loadContexts(cli CLI, cp transcribe.ContextParams) (*transcribe.Context, *t
 }
 
 // registerGlobalHotkey parses and registers the global hotkey. On any failure
-// it warns and continues: the foreground terminal 'q' key (handled by
-// startScreenPoller) still quits the app, so this never regresses users who
-// lack permissions or platform support.
+// it warns and continues: the foreground terminal 'q' key (handled by the UI
+// poller) still quits the app, so this never regresses users who lack
+// permissions or platform support.
 //
 // On each keydown/keyup the hotkey signals hotkeyCh so the main loop can act
 // on it: when paused a short tap starts a fresh session, a press held longer
 // than holdThreshold finalizes on release (push-to-talk); when
 // listening/dictating any keydown finalizes and emits the current session. It
 // does not stop the program.
-func registerGlobalHotkey(cli CLI, hotkeyCh chan<- hotkeyEvt) {
+func registerGlobalHotkey(cli CLI, hotkeyCh chan<- hotkeyEvt, ui UI) {
 	if cli.HotkeyKey == "" {
 		fmt.Fprintf(os.Stderr, "warning: global hotkey disabled.\n")
 	} else if hkMods, hkKey, perr := hotkey.ParseCombo(cli.HotkeyMods, cli.HotkeyKey); perr != nil {
-		die(1, "error: invalid --hotkey-mods or --hotkey-key (%q+%q): %v\n", cli.HotkeyMods, cli.HotkeyKey, perr)
+		die(ui, 1, "error: invalid --hotkey-mods or --hotkey-key (%q+%q): %v\n", cli.HotkeyMods, cli.HotkeyKey, perr)
 	} else if stopHK, rerr := hotkey.Register(hkMods, hkKey); rerr != nil {
-		die(1, "error: could not register global hotkey %s+%s: %v\n", cli.HotkeyMods, cli.HotkeyKey, rerr)
+		die(ui, 1, "error: could not register global hotkey %s+%s: %v\n", cli.HotkeyMods, cli.HotkeyKey, rerr)
 	} else {
 		hotkeyLabel = stopHK.String()
 		logActionf("hotkey registered: %s", hotkeyLabel)
@@ -592,62 +429,6 @@ func startSDLPoller(running *atomic.Bool) {
 	}()
 }
 
-// initScreen creates and initializes the tcell screen, populating the screen,
-// screenWidth and screenHeight globals. It exits the process on failure.
-func initScreen() {
-	tcell.SetEncodingFallback(tcell.EncodingFallbackASCII)
-
-	var err error
-	screen, err = tcell.NewScreen()
-	if err != nil {
-		os.Setenv("TERM", "xterm-256color")
-		screen, err = tcell.NewScreen()
-	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "main: failed to create tcell screen: %v\n", err)
-		os.Exit(1)
-	}
-	if err := screen.Init(); err != nil {
-		fmt.Fprintf(os.Stderr, "main: failed to init tcell screen: %v\n", err)
-		os.Exit(1)
-	}
-	screen.SetStyle(tcell.StyleDefault)
-	screen.Clear()
-	screenWidth, screenHeight = screen.Size()
-}
-
-// startScreenPoller runs a goroutine that watches tcell events. Pressing 'q'
-// quits the app; pressing 'p' (or 'P') signals pauseCh so the main loop can
-// toggle the paused state; pressing 'd' (or 'D') signals deleteCh so the main
-// loop can discard the current session without finalizing.
-func startScreenPoller(running *atomic.Bool, pauseCh chan<- struct{}, deleteCh chan<- struct{}) {
-	go func() {
-		for running.Load() {
-			ev := screen.PollEvent()
-			switch ev := ev.(type) {
-			case *tcell.EventKey:
-				if ev.Key() == tcell.KeyRune {
-					switch ev.Rune() {
-					case 'q':
-						running.Store(false)
-						return
-					case 'p', 'P':
-						select {
-						case pauseCh <- struct{}{}:
-						default:
-						}
-					case 'd', 'D':
-						select {
-						case deleteCh <- struct{}{}:
-						default:
-						}
-					}
-				}
-			}
-		}
-	}()
-}
-
 // runMainLoop is the real-time transcription state machine. It samples the
 // microphone, runs VAD, transcribes active speech, merges new segments
 // against the running history, and redraws the screen.
@@ -666,11 +447,11 @@ func startScreenPoller(running *atomic.Bool, pauseCh chan<- struct{}, deleteCh c
 // It only returns when the running flag flips or a signal is received
 // (terminal 'q', SIGINT/SIGTERM, or SDL-quit), at which point the program
 // exits without finalizing.
-func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Context, ctx2 *transcribe.Context, wparams transcribe.FullParams, p whisperParams, tStart time.Time, hotkeyCh chan hotkeyEvt, pauseCh chan struct{}, deleteCh chan struct{}, trayCh <-chan tray.Event, initialState appState, skipPause bool, clipErr error) {
+func runMainLoop(running *atomic.Bool, ui UI, mic *audio.AudioAsync, ctx *transcribe.Context, ctx2 *transcribe.Context, wparams transcribe.FullParams, p whisperParams, tStart time.Time, hotkeyCh chan hotkeyEvt, trayCh <-chan tray.Event, initialState State, skipPause bool, clipErr error) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	var segments []segment
+	var segments []Segment
 	tLast := tStart
 	state := initialState
 
@@ -681,8 +462,7 @@ func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Co
 	var holdStart time.Time
 
 	// segmentsText concatenates the accumulated session segments into a
-	// single string for display. Used by the main loop and the finalize
-	// transition's red redraw.
+	// single string for display.
 	segmentsText := func() string {
 		var sb strings.Builder
 		for _, segment := range segments {
@@ -692,23 +472,15 @@ func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Co
 	}
 
 	// redrawText clears the screen and repaints the given text plus the
-	// status line in the given style. Used by the main loop (default style,
-	// accumulated segments) and the finalize transition (red during
-	// finalization, green for the finalized text while paused afterwards).
-	redrawText := func(text string, style tcell.Style, stateStr string) {
-		screen.Clear()
-		printWrapped(0, 0, screenWidth, screenHeight-1, style, strings.TrimSpace(text))
-		printStatus(stateStr)
-		screen.Show()
+	// status line, then updates the tray and toast.
+	redrawText := func(text string, s State) {
+		ui.ShowText(text, s)
 		if tr != nil {
 			tr.SetDictationText(text)
 		}
-		var persist = true
-		if state == StatePaused {
-			persist = false
-		}
+		persist := s != StatePaused
 		if strings.TrimSpace(text) != "" {
-			toast.Show(stateStr, text, persist)
+			toast.Show(s.String(), text, persist)
 		}
 	}
 
@@ -719,11 +491,11 @@ func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Co
 	finalize := func(fromTray bool) {
 		start := time.Now()
 		state = StateFinalizing
-		redrawText(segmentsText(), finalizingStyle, state.String())
+		redrawText(segmentsText(), StateFinalizing)
 
-		finalText := produceFinalText(ctx2, segments, wparams, mic)
+		finalText := produceFinalText(ui, ctx2, segments, wparams, mic)
 		emitFinal(finalText, clipErr, fromTray, start)
-		drainInput(hotkeyCh, pauseCh)
+		drainInput(hotkeyCh, ui)
 
 		mic.Clear()
 		segments = nil
@@ -735,22 +507,59 @@ func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Co
 				logActionf("audio resume after finalize failed: %v", err)
 			}
 			state = StateListening
-			redrawText("", tcell.StyleDefault, state.String())
+			redrawText("", StateListening)
 		} else {
 			// produceFinalText already paused the mic; stay paused. Draw the
 			// finalized text in green and leave it on screen while paused; any
 			// unpause (hotkey or 'p') clears it for the next session.
 			state = StatePaused
-			redrawText(finalText, finalizedStyle, state.String())
+			redrawText(finalText, StatePaused)
 		}
 	}
 
-	// handleTray dispatches a tray event into the existing input channels. The
-	// toggle is delivered as a synthesized hotkey tap (keydown then keyup) so it
-	// reuses the exact hotkey logic: when paused it starts a fresh session,
-	// when active it finalizes and pastes. Sends are non-blocking to avoid
-	// stalling the loop (the only consumer of these channels); in practice the
-	// channels are drained every iteration so nothing drops.
+	// handlePause toggles the paused state without finalizing. It is shared
+	// between the UI pause-event channel and the tray pause menu item.
+	handlePause := func() {
+		switch state {
+		case StatePaused:
+			// Unpause: resume the preserved session in place.
+			if err := mic.Resume(); err != nil {
+				logActionf("audio resume on unpause failed: %v", err)
+			}
+			state = StateListening
+			redrawText("", StateListening)
+		case StateListening, StateDictating:
+			// Pause: preserve the in-flight session.
+			holdActive = false
+			if err := mic.Pause(); err != nil {
+				logActionf("audio pause failed: %v", err)
+			}
+			state = StatePaused
+			ui.ShowStatus(state.String())
+		}
+	}
+
+	// handleDelete discards the current session without finalizing. It is
+	// shared between the UI delete-event channel and the tray delete menu item.
+	handleDelete := func() {
+		mic.Clear()
+		segments = nil
+		holdActive = false
+		now := time.Now()
+		tLast = now
+		tStart = now
+		switch state {
+		case StatePaused:
+			redrawText("", StatePaused)
+			logActionf("delete (paused)")
+		default:
+			state = StateListening
+			redrawText("", StateListening)
+			logActionf("delete (active)")
+		}
+	}
+
+	// handleTray dispatches a tray event to the appropriate handler.
 	handleTray := func(evt tray.Event) {
 		switch evt {
 		case tray.EventToggle:
@@ -764,15 +573,9 @@ func runMainLoop(running *atomic.Bool, mic *audio.AudioAsync, ctx *transcribe.Co
 			default:
 			}
 		case tray.EventDelete:
-			select {
-			case deleteCh <- struct{}{}:
-			default:
-			}
+			handleDelete()
 		case tray.EventPause:
-			select {
-			case pauseCh <- struct{}{}:
-			default:
-			}
+			handlePause()
 		case tray.EventAbout:
 			toast.Show("low_latency_dictation", strings.TrimSpace(versionString), false)
 		case tray.EventQuit:
@@ -804,34 +607,20 @@ mainloop:
 					holdActive = true
 					holdStart = evt.t
 					state = StateListening
-					redrawText("", tcell.StyleDefault, state.String())
+					redrawText("", StateListening)
 				} else {
 					// keyup while still Paused (e.g. paused again before the
 					// release): just disarm; nothing to finalize.
 					holdActive = false
 				}
-			case <-pauseCh:
-				// Unpause via 'p': resume the preserved session in place.
-				// Clear any finalized text left on screen by a prior finalize.
-				if err := mic.Resume(); err != nil {
-					logActionf("audio resume on unpause failed: %v", err)
-				}
-				state = StateListening
-				redrawText("", tcell.StyleDefault, state.String())
-			case <-deleteCh:
-				// Delete via 'd' while paused: discard the preserved session
-				// and any finalized text left on screen, and stay paused. The
-				// mic is already stopped; only the buffers/screen are cleared.
-				mic.Clear()
-				segments = nil
-				holdActive = false
-				now := time.Now()
-				tLast = now
-				tStart = now
-				redrawText("", tcell.StyleDefault, state.String())
-				logActionf("delete (paused)")
+			case <-ui.PauseEvents():
+				handlePause()
+			case <-ui.DeleteEvents():
+				handleDelete()
 			case evt := <-trayCh:
 				handleTray(evt)
+			case <-ui.QuitRequested():
+				break mainloop
 			case <-time.After(100 * time.Millisecond):
 			}
 			continue mainloop
@@ -865,33 +654,17 @@ mainloop:
 				// A stray keyup with no armed hold is ignored.
 			}
 			continue mainloop
-		case <-pauseCh:
-			// Pause without finalizing; preserve the in-flight session.
-			holdActive = false
-			if err := mic.Pause(); err != nil {
-				logActionf("audio pause failed: %v", err)
-			}
-			state = StatePaused
-			printStatus(state.String())
-			screen.Show()
+		case <-ui.PauseEvents():
+			handlePause()
 			continue mainloop
-		case <-deleteCh:
-			// Delete via 'd' while active: discard the current dictation and
-			// keep listening. The mic stays live; only the buffers/screen are
-			// cleared. No finalization, no copy, no paste.
-			mic.Clear()
-			segments = nil
-			holdActive = false
-			now := time.Now()
-			tLast = now
-			tStart = now
-			state = StateListening
-			redrawText("", tcell.StyleDefault, state.String())
-			logActionf("delete (active)")
+		case <-ui.DeleteEvents():
+			handleDelete()
 			continue mainloop
 		case evt := <-trayCh:
 			handleTray(evt)
 			continue mainloop
+		case <-ui.QuitRequested():
+			break mainloop
 		default:
 		}
 
@@ -906,14 +679,12 @@ mainloop:
 
 		if !vad.SimpleVAD(ls, transcribe.WhisperSampleRate, 250, p.vadThold, p.freqThold, false) {
 			state = StateListening
-			printStatus(state.String())
-			screen.Show()
+			ui.ShowStatus(state.String())
 			time.Sleep(16 * time.Millisecond)
 			continue
 		}
 		state = StateDictating
-		printStatus(state.String())
-		screen.Show()
+		ui.ShowStatus(state.String())
 		logActionf("vad activated")
 		pcmf32New := mic.Get(p.lengthMs)
 		tLast = tNow
@@ -924,7 +695,7 @@ mainloop:
 		}
 
 		if err := ctx.Full(wparams, pcmf32New); err != nil {
-			die(6, "main: failed to process audio: %v\n", err)
+			die(ui, 6, "main: failed to process audio: %v\n", err)
 		}
 
 		transcriptionEnd := tLast.Sub(tStart).Milliseconds()
@@ -936,7 +707,7 @@ mainloop:
 			t0 := ctx.SegmentT0(i) + int64(transcriptionStart)/10
 			t1 := ctx.SegmentT1(i) + int64(transcriptionStart)/10
 
-			seg := segment{
+			seg := Segment{
 				Text:  text,
 				Start: t0,
 				End:   t1,
@@ -957,7 +728,7 @@ mainloop:
 		}
 
 		// redraw all segments on screen
-		redrawText(segmentsText(), tcell.StyleDefault, state.String())
+		redrawText(segmentsText(), state)
 	}
 }
 
@@ -971,14 +742,14 @@ mainloop:
 // for delivering the text (emitFinal) and restoring the TUI afterwards. The
 // microphone is left paused; the caller must Clear and Resume it for the next
 // session.
-func produceFinalText(ctx2 *transcribe.Context, segments []segment, wparams transcribe.FullParams, mic *audio.AudioAsync) string {
+func produceFinalText(ui UI, ctx2 *transcribe.Context, segments []Segment, wparams transcribe.FullParams, mic *audio.AudioAsync) string {
 	mic.Pause()
 	var finalText string
 	if ctx2 != nil {
 		fullAudio := mic.GetFullAudio()
 		if len(fullAudio) > 0 {
 			if err := ctx2.Full(wparams, fullAudio); err != nil {
-				die(6, "main: failed to process audio: %v\n", err)
+				die(ui, 6, "main: failed to process audio: %v\n", err)
 			}
 		}
 
@@ -1000,14 +771,15 @@ func produceFinalText(ctx2 *transcribe.Context, segments []segment, wparams tran
 	return finalText
 }
 
-// drainInput discards any pending hotkey/pause events that arrived while the
-// loop was blocked (e.g. during a slow finalization) so the next session
-// starts with a clean input state.
-func drainInput(hotkeyCh <-chan hotkeyEvt, pauseCh <-chan struct{}) {
+// drainInput discards any pending hotkey/pause/delete events that arrived
+// while the loop was blocked (e.g. during a slow finalization) so the next
+// session starts with a clean input state.
+func drainInput(hotkeyCh <-chan hotkeyEvt, ui UI) {
 	for {
 		select {
 		case <-hotkeyCh:
-		case <-pauseCh:
+		case <-ui.PauseEvents():
+		case <-ui.DeleteEvents():
 		default:
 			return
 		}
@@ -1074,10 +846,4 @@ func emitFinal(finalText string, clipErr error, fromTray bool, start time.Time) 
 	} else {
 		logActionf("paste ok")
 	}
-}
-
-type segment struct {
-	Text  string
-	Start int64
-	End   int64
 }
