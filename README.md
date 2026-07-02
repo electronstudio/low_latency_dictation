@@ -38,10 +38,11 @@ Needs uinput group permissions.  Enter this command then reboot:
 
 On Gnome, we recommend you install a [system tray](https://extensions.gnome.org/extension/615/appindicator-support/).
 You can double-click the tray icon to start or to paste the transcription into the active window.
+Right click for menu.
 
 ### Windows
 
-You can drag the systray icon out of the systray menu to pin it to the taskbar.  Single click the tray icon to start dictation or to copy the transcription to the clipboard. (Paste is not automatic.)
+You can drag the systray icon out of the systray menu to pin it to the taskbar.  Single click the tray icon to start dictation or to copy the transcription to the clipboard. (Paste is not automatic.) Right click for menu.
 
 ### macOS (experimental)
 
