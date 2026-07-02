@@ -39,7 +39,14 @@ whisper_libs:
 		cmake -S $(WHISPER_DIR) -B $(WHISPER_BUILD) \
 			-DCMAKE_BUILD_TYPE=Release \
 			-DGGML_VULKAN=$(GGML_VULKAN) \
-			-DBUILD_SHARED_LIBS=OFF; \
+			-DBUILD_SHARED_LIBS=OFF \
+			-DGGML_NATIVE=OFF \
+			-DGGML_AVX2=ON \
+			-DGGML_AVX=ON \
+			-DGGML_FMA=ON \
+			-DGGML_F16C=ON \
+			-DGGML_SSE42=ON \
+			-DGGML_BMI2=ON; \
 		cmake --build $(WHISPER_BUILD) --parallel $(CPU_COUNT); \
 		mkdir -p libs; \
 		cp $(WHISPER_BUILD)/src/libwhisper.a libs/; \

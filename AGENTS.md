@@ -21,6 +21,8 @@ Compile with `make`, which detects the host platform and delegates to one of the
 - SDL2 include/library paths via `cygpath -m` (Go toolchain invokes native `gcc.exe`, which needs Windows-style paths)
 - Vulkan library name (`vulkan-1` instead of `vulkan`)
 
+**CPU target baseline:** All platform Makefiles build ggml with `-DGGML_NATIVE=OFF` and explicitly enable `-DGGML_AVX2=ON -DGGML_AVX=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_SSE42=ON -DGGML_BMI2=ON`. This produces a reproducible, CI-runner-independent binary that requires a Haswell-era (2014+) x86-64 CPU instead of whatever CPU happens to build it.
+
 ## Dependencies
 - **Go 1.24+**
 - **System-wide C headers:** `whisper.h`, `ggml*.h`, SDL2 headers
