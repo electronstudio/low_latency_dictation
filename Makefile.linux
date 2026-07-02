@@ -27,7 +27,7 @@ CGO_LDFLAGS := $(SDL2_LDFLAGS) $(VULKAN_LDFLAGS)
 .PHONY: all clean whisper_libs install uninstall
 
 all: whisper_libs
-	CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" go build -ldflags "$(GO_LDFLAGS)" -o $(BINARY) $(GO_TAGS) .
+	CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" go build -ldflags "$(GO_LDFLAGS)" -o $(BINARY) $(GO_TAGS) ./cmd/dictate
 
 whisper_libs:
 	@missing=0; \

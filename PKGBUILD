@@ -16,7 +16,7 @@ sha256sums=('SKIP')
 
 pkgver() {
   cd "$srcdir/low_latency_dictation"
-  local base=$(cat VERSION)
+  local base=$(cat cmd/dictate/VERSION)
   printf "%s.r%s.%s" "$base" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
 }
 

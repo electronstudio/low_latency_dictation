@@ -34,14 +34,14 @@ Compile with `make`, which detects the host platform and delegates to one of the
 ## Architecture
 Module: `github.com/electronstudio/low_latency_dictation`
 
-Top-level package `main`:
-- `main.go` — `App` struct and orchestration (setup, state machine, cleanup)
-- `logging.go` — action logger, whisper log sink, and log setup helpers
-- `model.go` — model download/caching with SHA-1 verification
-- `state.go` — `State` enum, `Segment` type, and `String()` formatting
-- `ui.go` — `UI` interface abstracting terminal/GUI output
-- `tui.go` — tcell-based terminal implementation of `UI`
-- `main_icons_unix.go` / `main_icons_windows.go` — embedded tray icons
+Package `main` (the executable entry point) lives in `cmd/dictate/`:
+- `cmd/dictate/main.go` — `App` struct and orchestration (setup, state machine, cleanup)
+- `cmd/dictate/logging.go` — action logger, whisper log sink, and log setup helpers
+- `cmd/dictate/model.go` — model download/caching with SHA-1 verification
+- `cmd/dictate/state.go` — `State` enum, `Segment` type, and `String()` formatting
+- `cmd/dictate/ui.go` — `UI` interface abstracting terminal/GUI output
+- `cmd/dictate/tui.go` — tcell-based terminal implementation of `UI`
+- `assets/icons.go` (+ `icons_unix.go` / `icons_windows.go`) — embedded tray icons, exported via `assets.IconForState`
 
 Packages under `main`:
 - `audio/` — SDL2-based async audio capture (circular buffer, mutex-protected)
@@ -64,7 +64,7 @@ See `--help` for all CLI options.
 
 ## Testing
 
-Pure-Go packages (`hotkey`, `vad`, `model`, `tray`, `toast`, `typing`) can be unit-tested without building the vendored whisper.cpp libraries. CGO packages (`audio`, `transcribe`) require `make whisper_libs` first.
+Pure-Go packages (`hotkey`, `vad`, `tray`, `toast`, `typing`) can be unit-tested without building the vendored whisper.cpp libraries. The `cmd/dictate` package and CGO packages (`audio`, `transcribe`) require `make whisper_libs` first.
 
 Run all tests with:
 
@@ -79,7 +79,7 @@ Run all tests with:
 
 ## Cross-platform main thread
 
-`main.go` uses `golang.design/x/mainthread` because macOS global hotkeys require the `CGEventTap` callback to run on the main thread. `main()` calls `mainthread.Init(run)`; the tray uses `mainthread.Call` on macOS/Linux for startup and teardown.
+`cmd/dictate/main.go` uses `golang.design/x/mainthread` because macOS global hotkeys require the `CGEventTap` callback to run on the main thread. `main()` calls `mainthread.Init(run)`; the tray uses `mainthread.Call` on macOS/Linux for startup and teardown.
 
 ## Assets
 
