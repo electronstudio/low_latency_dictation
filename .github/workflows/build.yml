@@ -8,6 +8,17 @@ on:
   workflow_dispatch:
 
 jobs:
+  get-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: get-version
+        run: |
+          version=$(cat cmd/dictate/VERSION)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   build-linux:
     needs: get-version
     runs-on: ubuntu-22.04
