@@ -9,6 +9,7 @@ on:
 
 jobs:
   build-linux:
+    needs: get-version
     runs-on: ubuntu-22.04
 
     steps:
@@ -41,13 +42,21 @@ jobs:
       - name: Build
         run: make -f Makefile.linux GO_LDFLAGS="-s -w"
 
+      - name: Stage artifact
+        run: |
+          name="dictate-linux-x86_64-${{ needs.get-version.outputs.version }}"
+          mkdir -p "dist/$name"
+          cp dictate "dist/$name/"
+          cp README.md LICENSE "dist/$name/"
+
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: dictate-linux-x86_64
-          path: ./dictate
+          name: dictate-linux-x86_64-${{ needs.get-version.outputs.version }}
+          path: dist/dictate-linux-x86_64-${{ needs.get-version.outputs.version }}/
 
   build-mac-arm64:
+    needs: get-version
     runs-on: macos-26
     env:
       MACOSX_DEPLOYMENT_TARGET: 11.0
@@ -76,13 +85,21 @@ jobs:
         run: |
           make -f Makefile.macos GO_LDFLAGS="-s -w"
 
-      - name: Upload jar
+      - name: Stage artifact
+        run: |
+          name="dictate-macos-arm64-${{ needs.get-version.outputs.version }}"
+          mkdir -p "dist/$name"
+          cp dictate "dist/$name/"
+          cp README.md LICENSE "dist/$name/"
+
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: dictate-macos-arm64
-          path: ./dictate
+          name: dictate-macos-arm64-${{ needs.get-version.outputs.version }}
+          path: dist/dictate-macos-arm64-${{ needs.get-version.outputs.version }}/
 
   build-mac-x86_64:
+    needs: get-version
     runs-on: macos-15-intel
     env:
       # libwhsiper wont compile on 10.14
@@ -112,13 +129,21 @@ jobs:
         run: |
           make -f Makefile.macos GO_LDFLAGS="-s -w"
 
+      - name: Stage artifact
+        run: |
+          name="dictate-macos-x86_64-${{ needs.get-version.outputs.version }}"
+          mkdir -p "dist/$name"
+          cp dictate "dist/$name/"
+          cp README.md LICENSE "dist/$name/"
+
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: dictate-macos-x86_64
-          path: ./dictate
+          name: dictate-macos-x86_64-${{ needs.get-version.outputs.version }}
+          path: dist/dictate-macos-x86_64-${{ needs.get-version.outputs.version }}/
 
   build-windows:
+    needs: get-version
     runs-on: windows-2022
 
     steps:
@@ -162,13 +187,22 @@ jobs:
           go clean -cache
           make -f Makefile.windows GO_LDFLAGS="-s -w"
 
+      - name: Stage artifact
+        shell: msys2 {0}
+        run: |
+          name="dictate-windows-x86_64-${{ needs.get-version.outputs.version }}"
+          mkdir -p "dist/$name"
+          cp dictate.exe "dist/$name/"
+          cp README.md LICENSE "dist/$name/"
+
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: dictate-windows-x86_64
-          path: ./dictate.exe
+          name: dictate-windows-x86_64-${{ needs.get-version.outputs.version }}
+          path: dist/dictate-windows-x86_64-${{ needs.get-version.outputs.version }}/
 
   build-flatpak:
+    needs: get-version
     runs-on: ubuntu-24.04
 
     steps:
@@ -189,8 +223,42 @@ jobs:
           flatpak-builder --user --repo repo --force-clean build-dir flatpak/uk.co.electronstudio.Dictate.yaml
           flatpak build-bundle repo low_latency_dictation.flatpak uk.co.electronstudio.Dictate
 
+      - name: Stage artifact
+        run: |
+          name="dictate-flatpak-x86_64-${{ needs.get-version.outputs.version }}"
+          mkdir -p "dist/$name"
+          cp low_latency_dictation.flatpak "dist/$name/"
+          cp README.md LICENSE "dist/$name/"
+
       - name: Upload bundle
         uses: actions/upload-artifact@v4
         with:
-          name: dictate-flatpak-x86_64
-          path: ./low_latency_dictation.flatpak
+          name: dictate-flatpak-x86_64-${{ needs.get-version.outputs.version }}
+          path: dist/dictate-flatpak-x86_64-${{ needs.get-version.outputs.version }}/
+
+  combine:
+    needs: [get-version, build-linux, build-mac-arm64, build-mac-x86_64, build-windows, build-flatpak]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: dictate-*-${{ needs.get-version.outputs.version }}
+
+      - name: Build combined zip
+        run: |
+          version="${{ needs.get-version.outputs.version }}"
+          outdir="dist/dictate-all-$version"
+          mkdir -p "$outdir"
+          for dir in artifacts/dictate-*; do
+            name=$(basename "$dir")
+            (cd artifacts && zip -r "../$outdir/$name.zip" "$name")
+          done
+
+      - name: Upload combined artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dictate-all-${{ needs.get-version.outputs.version }}
+          path: dist/dictate-all-${{ needs.get-version.outputs.version }}/
