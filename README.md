@@ -4,6 +4,63 @@
 
 A small TUI and systray Go program that does real-time speech-to-text from your microphone. It uses [whisper.cpp](https://github.com/ggerganov/whisper.cpp) under the hood for the actual inference, so all transcription happens locally.
 
+## Usage
+
+Install from the releases page.
+
+Make sure your microphone is connected, then run:
+
+```bash
+./dictate
+```
+
+The first time you run it, the required Whisper model will be downloaded automatically.
+If you do not have a GPU, use `--quality-preset low` option and it will pick a small, fast model.
+If you have any GPU, even an
+old one, you should be able to use ``--quality-preset medium`` and still get reasonable performance.
+Newer GPUs should be able to use `--quality-preset high`.
+
+See ``--help`` for complete control over model selection.
+
+A numbered list of audio devices will be printed on startup.  If the wrong one
+is used you can change it with `--audio-device` option.
+
+To begin dictating, tap the _global hotkey_, by default **ctrl+space**.  (If you prefer to begin immediately, use `--skip-pause-mode`)
+
+A lower quality model will display your dictation in real time.  When you have finished, tap the hotkey again to finialize.
+Your dictation will then be processed by a higher quality model, copied to the clipboard, and pasted into the current window.
+
+### Linux
+
+Needs uinput group permissions.  Enter this command then reboot:
+
+    sudo usermod -aG uinput $USER
+
+On Gnome, we recommend you install a [system tray](https://extensions.gnome.org/extension/615/appindicator-support/).
+You can double-click the tray icon to start or to paste the transcription into the active window.
+
+### Windows
+
+You can drag the systray icon out of the systray menu to pin it to the taskbar.  Single click the tray icon to start dictation or to copy the transcription to the clipboard. (Paste is not automatic.)
+
+### macOS (experimental)
+
+On macOS the hotkey requires the app to be trusted for **Accessibility** (Input Monitoring). Grant it the first time in *System Settings → Privacy & Security → Accessibility*. 
+
+
+## Global Hotkey
+
+The hotkey is configurable with `--hotkey-mods` and `--hotkey-key`, e.g.:
+
+```bash
+./dictate --hotkey-mods alt --hotkey-key f1
+```
+
+Accepted modifiers (joined by `+`): `ctrl`, `shift`, `alt`, and `cmd` (macOS) / `win` / `super` (the Windows/Command/Super key). Keys: `a`–`z`, `0`–`9`, `f1`–`f12`, `space`, `return`, `escape`, `delete`, `tab`, and the arrow keys.
+
+`--hotkey-key ""` disables the hotkey.
+
+
 ## Building
 
 ### Arch (CachyOS, Artix, etc) Linux
@@ -28,56 +85,6 @@ git submodule update --init --recursive
 make
 sudo make install 
 ```
-
-## Requirements
-
-Linux, MacOS or Windows.  Only Linux has been tested.
-
-### Linux
-
-Needs uinput group permissions.  Reboot after this command:
-
-    sudo usermod -aG uinput $USER
-
-### macOS
-
-On macOS the hotkey requires the app to be trusted for **Accessibility** (Input Monitoring). Grant it the first time in *System Settings → Privacy & Security → Accessibility*. 
-
-## Usage
-
-Make sure your microphone is connected, then run:
-
-```bash
-./dictate
-```
-
-The first time you run it, the required Whisper model will be downloaded automatically.
-If you do not have a GPU, use `--quality-preset low` option and it will pick a small, fast model.
-If you have any GPU, even an
-old one, you should be able to use ``--quality-preset medium`` and still get reasonable performance.
-Newer GPUs should be able to use `--quality-preset high`.
-
-See ``--help`` for complete control over model selection.
-
-A numbered list of audio devices will be printed on startup.  If the wrong one
-is used you can change it with `--audio-device` option.
-
-To begin dictating, tap the _global hotkey_, by default **ctrl+space**.  (If you prefer to begin immediately, use `--skip-pause-mode`)
-
-A lower quality model will display your dictation in real time.  When you have finished, tap the hotkey again to finialize.
-Your dictation will then be processed by a higher quality model, copied to the clipboard, and pasted into the current app.
-
-
-
-## Global Hotkey
-
-The stop hotkey is configurable with `--hotkey-mods` and `--hotkey-key`, e.g.:
-
-```bash
-./dictate --hotkey-mods alt --hotkey-key f1
-```
-
-Accepted modifiers (joined by `+`): `ctrl`, `shift`, `alt`, and `cmd` (macOS) / `win` / `super` (the Windows/Command/Super key). Keys: `a`–`z`, `0`–`9`, `f1`–`f12`, `space`, `return`, `escape`, `delete`, `tab`, and the arrow keys.
 
 
 ## License
