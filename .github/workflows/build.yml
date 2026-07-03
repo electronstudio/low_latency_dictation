@@ -64,7 +64,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: dictate-linux-x86_64-${{ needs.get-version.outputs.version }}
-          path: dist/dictate-linux-x86_64-${{ needs.get-version.outputs.version }}/
+          path: dist/dictate-linux-x86_64-${{ needs.get-version.outputs.version }}
 
   build-mac-arm64:
     needs: get-version
@@ -104,10 +104,10 @@ jobs:
           cp README.md LICENSE "dist/$name/"
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dictate-macos-arm64-${{ needs.get-version.outputs.version }}
-          path: dist/dictate-macos-arm64-${{ needs.get-version.outputs.version }}/
+          path: dist/dictate-macos-arm64-${{ needs.get-version.outputs.version }}
 
   build-mac-x86_64:
     needs: get-version
@@ -151,7 +151,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: dictate-macos-x86_64-${{ needs.get-version.outputs.version }}
-          path: dist/dictate-macos-x86_64-${{ needs.get-version.outputs.version }}/
+          path: dist/dictate-macos-x86_64-${{ needs.get-version.outputs.version }}
 
   build-windows:
     needs: get-version
@@ -210,7 +210,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: dictate-windows-x86_64-${{ needs.get-version.outputs.version }}
-          path: dist/dictate-windows-x86_64-${{ needs.get-version.outputs.version }}/
+          path: dist/dictate-windows-x86_64-${{ needs.get-version.outputs.version }}
 
   build-flatpak:
     needs: get-version
@@ -245,7 +245,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: dictate-flatpak-x86_64-${{ needs.get-version.outputs.version }}
-          path: dist/dictate-flatpak-x86_64-${{ needs.get-version.outputs.version }}/
+          path: dist/dictate-flatpak-x86_64-${{ needs.get-version.outputs.version }}
 
   combine:
     needs: [get-version, build-linux, build-mac-arm64, build-mac-x86_64, build-windows, build-flatpak]
@@ -272,4 +272,4 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: dictate-all-${{ needs.get-version.outputs.version }}
-          path: dist/dictate-all-${{ needs.get-version.outputs.version }}/
+          path: dist/dictate-all-${{ needs.get-version.outputs.version }}

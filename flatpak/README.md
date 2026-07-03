@@ -5,7 +5,7 @@ May not be suitable for submission to Flathub yet.
 ## Build and install
 
     rm -rf .flatpak-builder repo builddir build-dir
-    flatpak-builder --install --install-deps-from=flathub --force-clean --user  builddir uk.co.electronstudio.Dictate.yaml  
+    flatpak-builder --install --install-deps-from=flathub --force-clean --user builddir uk.co.electronstudio.Dictate.yaml
 
 ## Run
 
@@ -14,7 +14,7 @@ May not be suitable for submission to Flathub yet.
 ## Validation checks
 
     flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest uk.co.electronstudio.Dictate.yaml
-    flatpak run --command=flatpak-builder-lint org.flatpak.Builder appstream uk.co.electronstudio.Dictate.metainfo.xml  
+    flatpak run --command=flatpak-builder-lint org.flatpak.Builder appstream uk.co.electronstudio.Dictate.metainfo.xml
     flatpak run --command=flatpak-builder-lint org.flatpak.Builder builddir builddir
     flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo repo
 
