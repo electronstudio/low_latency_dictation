@@ -61,7 +61,7 @@ jobs:
           cp README.md LICENSE "dist/$name/"
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dictate-linux-x86_64-${{ needs.get-version.outputs.version }}
           path: dist/dictate-linux-x86_64-${{ needs.get-version.outputs.version }}/
@@ -148,7 +148,7 @@ jobs:
           cp README.md LICENSE "dist/$name/"
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dictate-macos-x86_64-${{ needs.get-version.outputs.version }}
           path: dist/dictate-macos-x86_64-${{ needs.get-version.outputs.version }}/
@@ -207,7 +207,7 @@ jobs:
           cp README.md LICENSE "dist/$name/"
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dictate-windows-x86_64-${{ needs.get-version.outputs.version }}
           path: dist/dictate-windows-x86_64-${{ needs.get-version.outputs.version }}/
@@ -242,7 +242,7 @@ jobs:
           cp README.md LICENSE "dist/$name/"
 
       - name: Upload bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dictate-flatpak-x86_64-${{ needs.get-version.outputs.version }}
           path: dist/dictate-flatpak-x86_64-${{ needs.get-version.outputs.version }}/
@@ -269,7 +269,7 @@ jobs:
           done
 
       - name: Upload combined artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dictate-all-${{ needs.get-version.outputs.version }}
           path: dist/dictate-all-${{ needs.get-version.outputs.version }}/
