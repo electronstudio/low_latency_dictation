@@ -13,7 +13,7 @@ type UI interface {
 	Close()
 
 	// ShowStatus updates the status line with the given status text.
-	ShowStatus(status string)
+	ShowStatus(state State)
 
 	// ShowText displays the given dictation text, styling it according to
 	// the current application state. The status line is also updated to match

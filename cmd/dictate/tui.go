@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/mattn/go-runewidth"
 )
 
 // TerminalUI implements the UI interface using tcell.
@@ -34,7 +35,7 @@ func NewTerminalUI(hotkeyLabel string) *TerminalUI {
 		deleteCh:        make(chan struct{}, 1),
 		quitCh:          make(chan struct{}, 1),
 		stop:            make(chan struct{}),
-		statusStyle:     tcell.StyleDefault.Reverse(true),
+		statusStyle:     tcell.StyleDefault.Reverse(true).Bold(true),
 		finalizingStyle: tcell.StyleDefault.Foreground(tcell.ColorRed),
 		finalizedStyle:  tcell.StyleDefault.Foreground(tcell.ColorGreen),
 	}
@@ -77,15 +78,37 @@ func (t *TerminalUI) Close() {
 
 // ShowStatus updates the bottom status line and flushes the change to the
 // screen.
-func (t *TerminalUI) ShowStatus(status string) {
-	if t.height < 1 {
+func (t *TerminalUI) ShowStatus(state State) {
+	if t.height < 4 {
 		return
 	}
-	s := "[" + t.hotkeyLabel + "] start/end/paste [P]ause [Q]uit [D]elete   <" + status + ">"
-	if t.width > len(s) {
-		s += strings.Repeat(" ", t.width-len(s))
+	blankLine := strings.Repeat(" ", t.width)
+
+	printToScreen(t.screen, 0, 0, t.statusStyle, blankLine)
+	printToScreen(t.screen, 0, t.height-1, t.statusStyle, blankLine)
+
+	var style tcell.Style
+	var s string
+	switch state {
+	case StateDictating:
+		style = t.statusStyle.Foreground(tcell.ColorBlue)
+		s = "<<< LISTENING  >>>    press [" + t.hotkeyLabel + "] to finish and paste"
+	case StatePaused:
+		style = t.statusStyle.Foreground(tcell.ColorRed)
+		s = "<<<   PAUSED   >>>    press [" + t.hotkeyLabel + "] to start"
+	case StateListening:
+		style = t.statusStyle.Foreground(tcell.ColorGreen)
+		s = "<<< LISTENING  >>>    press [" + t.hotkeyLabel + "] to finish and paste"
+	case StateFinalizing:
+		style = t.statusStyle.Foreground(tcell.ColorYellow)
+		s = "<<< FINALIZING >>>    text will be copied and pasted"
 	}
-	printToScreen(t.screen, 0, t.height-1, t.statusStyle, s)
+
+	printToScreen(t.screen, 0, 0, style, s)
+
+	s2 := "dictate V" + versionString + " | keys: [P]ause [Q]uit [D]elete"
+	printToScreen(t.screen, 0, t.height-1, t.statusStyle, s2)
+
 	t.screen.Show()
 }
 
@@ -103,8 +126,8 @@ func (t *TerminalUI) ShowText(text string, state State) {
 	}
 
 	t.screen.Clear()
-	printWrapped(t.screen, 0, 0, t.width, t.height-1, style, strings.TrimSpace(text))
-	t.ShowStatus(state.String())
+	printWrapped(t.screen, 0, 1, t.width, t.height-2, style, strings.TrimSpace(text))
+	t.ShowStatus(state)
 	t.screen.Show()
 }
 
@@ -158,8 +181,10 @@ func (t *TerminalUI) pollEvents() {
 }
 
 func printToScreen(screen tcell.Screen, x, y int, style tcell.Style, text string) {
-	for i, r := range text {
-		screen.SetContent(x+i, y, r, nil, style)
+	col := 0
+	for _, r := range text {
+		screen.SetContent(x+col, y, r, nil, style)
+		col += runewidth.RuneWidth(r)
 	}
 }
 
@@ -168,29 +193,44 @@ func printWrapped(screen tcell.Screen, x, y, maxWidth, maxLines int, style tcell
 		return
 	}
 
+	rs := []rune(text)
+	n := len(rs)
+	widths := make([]int, n+1)
+	for i := 0; i < n; i++ {
+		widths[i+1] = widths[i] + runewidth.RuneWidth(rs[i])
+	}
+
 	var lines []string
-	for len(text) > 0 {
-		if len(text) <= maxWidth {
-			lines = append(lines, text)
+	start := 0
+	for start < n {
+		if widths[n]-widths[start] <= maxWidth {
+			lines = append(lines, string(rs[start:]))
 			break
 		}
 
-		cut := maxWidth
-		for i := maxWidth; i > 0; i-- {
-			if text[i] == ' ' {
+		end := start
+		for end < n && widths[end+1]-widths[start] <= maxWidth {
+			end++
+		}
+
+		cut := end
+		for i := end; i > start; i-- {
+			if rs[i] == ' ' {
 				cut = i
 				break
 			}
 		}
-		// If there is no space, break hard.
-		if cut == 0 {
-			cut = maxWidth
-		}
-		lines = append(lines, text[:cut])
-		if text[cut] == ' ' {
-			text = text[cut+1:]
+		if cut == end {
+			// Hard break.
+			lines = append(lines, string(rs[start:end+1]))
+			start = end + 1
+			if start < n && rs[start] == ' ' {
+				start++
+			}
 		} else {
-			text = text[cut:]
+			// Soft break at a space.
+			lines = append(lines, string(rs[start:cut]))
+			start = cut + 1
 		}
 	}
 

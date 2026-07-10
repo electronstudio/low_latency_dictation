@@ -543,7 +543,7 @@ func (a *App) handlePause() {
 			logActionf("audio pause failed: %v", err)
 		}
 		a.setState(StatePaused)
-		a.ui.ShowStatus(a.state.String())
+		a.ui.ShowStatus(a.state)
 	}
 }
 
@@ -751,12 +751,12 @@ func (a *App) transcribeTick() error {
 
 	if !vad.SimpleVAD(ls, transcribe.WhisperSampleRate, 250, a.params.vadThold, a.params.freqThold, false) {
 		a.setState(StateListening)
-		a.ui.ShowStatus(a.state.String())
+		a.ui.ShowStatus(a.state)
 		time.Sleep(16 * time.Millisecond)
 		return nil
 	}
 	a.setState(StateDictating)
-	a.ui.ShowStatus(a.state.String())
+	a.ui.ShowStatus(a.state)
 	logActionf("vad activated")
 	pcmf32New := a.mic.Get(a.params.lengthMs)
 	a.tLast = tNow
