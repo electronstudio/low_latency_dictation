@@ -79,4 +79,9 @@ modules:
       - sed -i "s/@VERSION@/$(cat cmd/dictate/VERSION)/; s/@DATE@/$(date +%Y-%m-%d)/" flatpak/uk.co.electronstudio.Dictate.metainfo.xml
       - install -Dm644 flatpak/uk.co.electronstudio.Dictate.metainfo.xml /app/share/metainfo/uk.co.electronstudio.Dictate.metainfo.xml
       - install -Dm644 assets/dictate.svg /app/share/icons/hicolor/scalable/apps/uk.co.electronstudio.Dictate.svg
-      - install -Dm644 assets/dictate.png /app/share/icons/hicolor/256x256/apps/uk.co.electronstudio.Dictate.png
+      - |
+        for size in 16 24 32 48 64 96 128 256; do
+          mkdir -p "/app/share/icons/hicolor/${size}x${size}/apps"
+          rsvg-convert -w "$size" -h "$size" assets/dictate.svg \
+            -o "/app/share/icons/hicolor/${size}x${size}/apps/uk.co.electronstudio.Dictate.png"
+        done
