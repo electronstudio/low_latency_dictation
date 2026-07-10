@@ -157,7 +157,12 @@ func (t *TerminalUI) pollEvents() {
 
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
-			if ev.Key() == tcell.KeyRune {
+			if ev.Key() == tcell.KeyCtrlC || ev.Key() == tcell.KeyEscape {
+				select {
+				case t.quitCh <- struct{}{}:
+				default:
+				}
+			} else if ev.Key() == tcell.KeyRune {
 				switch ev.Rune() {
 				case 'q':
 					select {

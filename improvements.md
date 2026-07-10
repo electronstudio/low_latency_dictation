@@ -3,14 +3,6 @@
 This file captures the improvement, refactoring, and simplification ideas
 identified during a full read-through of the non-vendor source tree.
 
-## 2. Fix TUI rendering for non-ASCII text
-
-- `printToScreen` uses byte index `i` as column offset; use
-  `runewidth.RuneWidth(r)` to advance a column counter.
-- `printWrapped` uses byte lengths as column widths; switch to
-  `runewidth.StringWidth` or iterate runes.
-- `printStatus` uses `len(s)` (bytes); use `utf8.RuneCountInString` or
-  `runewidth.StringWidth`.
 
 ## 3. Harden `model.go` downloads
 
