@@ -4,6 +4,12 @@
 
 A small TUI and systray Go program that does real-time speech-to-text from your microphone. It uses [whisper.cpp](https://github.com/ggerganov/whisper.cpp) under the hood for the actual inference, so all transcription happens locally.
 
+In terminal:
+![terminal demo video](assets/demo1.gif)
+
+In systray:
+![systray demo video](assets/demo2.gif)
+
 ## Usage
 
 Install from the releases page.
