@@ -22,7 +22,8 @@ If you have any GPU, even an
 old one, you should be able to use ``--quality-preset medium`` and still get reasonable performance. (Latency may be a bit worse.)
 Newer GPUs should be able to use `--quality-preset high` and still have reasonable latency.
 
-**See ``--help`` for complete control over model selection and other options.**
+**See ``--help`` for complete control over model selection and other options.**  Options can also be set
+in file `~/.config/low_latency_dictation/config.yaml`.
 
 A numbered list of audio devices will be printed on startup.  If the wrong one
 is used you can change it with `--audio-device` option.
@@ -31,6 +32,18 @@ To begin dictating, tap the _global hotkey_, by default **ctrl+space**.  (If you
 
 A lower quality model will be used to display your dictation in real time.  When you have finished, tap the hotkey again to finalize.
 Your dictation will then be processed by a higher quality model, copied to the clipboard, and pasted into the current window.
+
+## Global Hotkey
+
+The hotkey is configurable with `--hotkey-mods` and `--hotkey-key`, e.g.:
+
+```bash
+./dictate --hotkey-mods alt --hotkey-key f1
+```
+
+Accepted modifiers (joined by `+`): `ctrl`, `shift`, `alt`, and `cmd` (macOS) / `win` / `super` (the Windows/Command/Super key). Keys: `a`–`z`, `0`–`9`, `f1`–`f12`, `space`, `return`, `escape`, `delete`, `tab`, and the arrow keys.
+
+`--hotkey-key ""` disables the hotkey.
 
 ### Linux
 
@@ -49,19 +62,6 @@ You can drag the systray icon out of the systray menu to pin it to the taskbar. 
 ### macOS (experimental)
 
 On macOS the hotkey requires the app to be trusted for **Accessibility** (Input Monitoring). Grant it the first time in *System Settings → Privacy & Security → Accessibility*. 
-
-
-## Global Hotkey
-
-The hotkey is configurable with `--hotkey-mods` and `--hotkey-key`, e.g.:
-
-```bash
-./dictate --hotkey-mods alt --hotkey-key f1
-```
-
-Accepted modifiers (joined by `+`): `ctrl`, `shift`, `alt`, and `cmd` (macOS) / `win` / `super` (the Windows/Command/Super key). Keys: `a`–`z`, `0`–`9`, `f1`–`f12`, `space`, `return`, `escape`, `delete`, `tab`, and the arrow keys.
-
-`--hotkey-key ""` disables the hotkey.
 
 
 ## Building

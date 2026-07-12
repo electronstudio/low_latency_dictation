@@ -31,25 +31,25 @@ import (
 var versionString string
 
 type CLI struct {
-	Preset        string  `arg:"-q,--quality-preset" default:"" help:"Sets model etc automatically. low: no GPU, medium: poor GPU, high: good GPU"`
-	Model         string  `arg:"-m,--model" default:"ggml-tiny.en.bin" help:"Model for real-time transcription, e.g. ggml-medium-q5_0.bin"`
-	FinalModel    string  `arg:"-f,--final-model" default:"ggml-small.en.bin"      help:"Model for finalization, e.g ggml-large-v3-turbo-q5_0.bin, none to disable"`
-	VadThold      float32 `arg:"-s,--silence-detection"  default:"0.8"                   help:"Increase if it doesn't hear you when speaking. Decrease if it transcribes even when silent.'"`
-	HotkeyMods    string  `arg:"--hotkey-mods"       default:"ctrl"                  help:"Modifiers for the global hotkey (ctrl/alt/shift/cmd|win|super, joined by +)"`
-	HotkeyKey     string  `arg:"--hotkey-key"        default:"space"                 help:"Key for the global hotkey (e.g. d, f1, space, escape)"`
-	UseCPU        bool    `arg:"--use-cpu"           default:"false"                 help:"Disable GPU accleration"`
-	CaptureID     int     `arg:"-a,--audio-device"   default:"-1"                    help:"Audio device ID. Devices are listed on startup."`
-	LogFile       string  `arg:"--log-file"          default:""                      help:"Path to log file for actions"`
-	LogLevel      string  `arg:"--log-level"         default:"warn"                  help:"whisper.cpp console log level (debug/info/warn/error/none)"`
-	SkipPauseMode bool    `arg:"--skip-pause-mode"   default:"false"                 help:"Start listening immediately, and do not pause after pasting."`
-	LengthMs      int     `arg:"-l,--length"         default:"30000"                 help:"Buffer length in ms. Increase for better accuracy but worse latency during long transcriptions."`
-	NoTray        bool    `arg:"--no-tray"            default:"false"                 help:"Disable the system tray icon"`
-	Threads       int     `arg:"-t,--threads" default:"0"                     help:"Number of threads to use (0=auto)"`
-	MaxTokens     int     `arg:"--max-tokens"        default:"32"                    help:"(ADVANCED: Max tokens per segment)"`
-	AudioCtx      int     `arg:"--audio-ctx"         default:"0"                     help:"(ADVANCED: Audio context size)"`
-	FreqThold     float32 `arg:"--freq-thold"        default:"100.0"                 help:"(ADVANCED: High-pass filter cutoff)"`
-	Language      string  `arg:"--lang"              default:"en"                    help:"(ADVANCED: Language code)"`
-	FlashAttn     bool    `arg:"--flash-attn"         default:"true"                  help:"(ADVANCED: Use flash attention)"`
+	Preset        string  `arg:"-q,--quality-preset" default:"" help:"Sets model etc automatically. low: no GPU, medium: poor GPU, high: good GPU" yaml:"quality-preset"`
+	Model         string  `arg:"-m,--model" default:"ggml-tiny.en.bin" help:"Model for real-time transcription, e.g. ggml-medium-q5_0.bin" yaml:"model"`
+	FinalModel    string  `arg:"-f,--final-model" default:"ggml-small.en.bin"      help:"Model for finalization, e.g ggml-large-v3-turbo-q5_0.bin, none to disable" yaml:"final-model"`
+	VadThold      float32 `arg:"-s,--silence-detection"  default:"0.8"                   help:"Increase if it doesn't hear you when speaking. Decrease if it transcribes even when silent.'" yaml:"silence-detection"`
+	HotkeyMods    string  `arg:"--hotkey-mods"       default:"ctrl"                  help:"Modifiers for the global hotkey (ctrl/alt/shift/cmd|win|super, joined by +)" yaml:"hotkey-mods"`
+	HotkeyKey     string  `arg:"--hotkey-key"        default:"space"                 help:"Key for the global hotkey (e.g. d, f1, space, escape)" yaml:"hotkey-key"`
+	UseCPU        bool    `arg:"--use-cpu"           default:"false"                 help:"Disable GPU accleration" yaml:"use-cpu"`
+	CaptureID     int     `arg:"-a,--audio-device"   default:"-1"                    help:"Audio device ID. Devices are listed on startup." yaml:"audio-device"`
+	LogFile       string  `arg:"--log-file"          default:""                      help:"Path to log file for actions" yaml:"log-file"`
+	LogLevel      string  `arg:"--log-level"         default:"warn"                  help:"whisper.cpp console log level (debug/info/warn/error/none)" yaml:"log-level"`
+	SkipPauseMode bool    `arg:"--skip-pause-mode"   default:"false"                 help:"Start listening immediately, and do not pause after pasting." yaml:"skip-pause-mode"`
+	LengthMs      int     `arg:"-l,--length"         default:"30000"                 help:"Buffer length in ms. Increase for better accuracy but worse latency during long transcriptions." yaml:"length"`
+	NoTray        bool    `arg:"--no-tray"            default:"false"                 help:"Disable the system tray icon" yaml:"no-tray"`
+	Threads       int     `arg:"-t,--threads" default:"0"                     help:"Number of threads to use (0=auto)" yaml:"threads"`
+	MaxTokens     int     `arg:"--max-tokens"        default:"32"                    help:"(ADVANCED: Max tokens per segment)" yaml:"max-tokens"`
+	AudioCtx      int     `arg:"--audio-ctx"         default:"0"                     help:"(ADVANCED: Audio context size)" yaml:"audio-ctx"`
+	FreqThold     float32 `arg:"--freq-thold"        default:"100.0"                 help:"(ADVANCED: High-pass filter cutoff)" yaml:"freq-thold"`
+	Language      string  `arg:"--lang"              default:"en"                    help:"(ADVANCED: Language code)" yaml:"lang"`
+	FlashAttn     bool    `arg:"--flash-attn"         default:"true"                  help:"(ADVANCED: Use flash attention)" yaml:"flash-attn"`
 }
 
 // TODO: remove LEngthMS?
@@ -828,7 +828,18 @@ func main() { mainthread.Init(run) }
 // the main loop. All fatal exits happen from here.
 func run() {
 	var cli CLI
-	arg.MustParse(&cli)
+	if err := loadConfig(&cli); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	p, err := arg.NewParser(arg.Config{IgnoreDefault: true}, &cli)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(2)
+	}
+	p.MustParse(os.Args[1:])
+
 	applyPreset(&cli)
 
 	if err := typing.Init(); err != nil {
@@ -853,6 +864,8 @@ func run() {
 // applyPreset mutates the CLI based on the selected quality preset.
 func applyPreset(cli *CLI) {
 	switch cli.Preset {
+	case "":
+		return
 	case "low":
 		cli.Model = "ggml-tiny.en.bin"
 		cli.FinalModel = "ggml-small.en.bin"

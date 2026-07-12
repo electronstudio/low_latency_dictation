@@ -25,6 +25,7 @@ Compile with `make`, which detects the host platform and delegates to one of the
 
 ## Dependencies
 - **Go 1.24+**
+- **Go packages:** `gopkg.in/yaml.v3` (config file parsing)
 - **System-wide C headers:** `whisper.h`, `ggml*.h`, SDL2 headers
 - **System libs:** `libSDL2`, `libvulkan`
 - **Linux:** OpenMP (`-fopenmp`)
@@ -36,6 +37,7 @@ Module: `github.com/electronstudio/low_latency_dictation`
 
 Package `main` (the executable entry point) lives in `cmd/dictate/`:
 - `cmd/dictate/main.go` — `App` struct and orchestration (setup, state machine, cleanup)
+- `cmd/dictate/config.go` — YAML config file loading and default-config generation
 - `cmd/dictate/logging.go` — action logger, whisper log sink, and log setup helpers
 - `cmd/dictate/model.go` — model download/caching with SHA-1 verification
 - `cmd/dictate/state.go` — `State` enum, `Segment` type, and `String()` formatting
@@ -54,6 +56,16 @@ Packages under `main`:
 
 ## Runtime
 Requires a live microphone/audio input device.
+
+A YAML config file can be used instead of repeating command-line flags.
+
+- Default path: `<user config dir>/low_latency_dictation/config.yaml`
+  - Linux: `~/.config/low_latency_dictation/config.yaml`
+  - macOS: `~/Library/Application Support/low_latency_dictation/config.yaml`
+  - Windows: `%APPDATA%\low_latency_dictation\config.yaml`
+- If the default config file is missing, it is created automatically with all current defaults commented out.
+- Command-line arguments override config file values.
+- `--quality-preset` overrides the individual model/final-model/CPU/length settings.
 
 ## Models
 Model binaries are cached in `~/.cache/low_latency_dictation/` and are not in version control.

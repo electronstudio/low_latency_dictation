@@ -94,7 +94,7 @@ func resolveModelFile(modelName string) (string, error) {
 		return "", fmt.Errorf("failed to get cache directory: %w", err)
 	}
 
-	cacheDir := filepath.Join(cacheBase, "low_latency_dictation")
+	cacheDir := filepath.Join(cacheBase, appName)
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create cache directory %s: %w", cacheDir, err)
 	}

@@ -1,6 +1,6 @@
 # Build artifacts
-dictation
-dictate
+/dictation
+/dictate
 *.o
 *.d
 
@@ -32,5 +32,4 @@ ouput.log
 
 .idea
 
-# Stray git repo from a clone operation
-/low_latency_dictation/
+
