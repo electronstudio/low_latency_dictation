@@ -31,25 +31,25 @@ import (
 var versionString string
 
 type CLI struct {
-	Model         string  `arg:"-m,--model" default:"ggml-tiny.en-q8_0.bin" help:"Model for real-time transcription, e.g. ggml-medium-q5_0.bin"`
-	Preset        string  `arg:"-q,--quality-preset" default:"" help:"low: no GPU, medium: poor GPU, high: good GPU"`
-	FinalModel    string  `arg:"-f,--final-model" default:"ggml-base.en.bin"      help:"Model for finalization, e.g ggml-large-v3-turbo-q5_0.bin, none to disable"`
-	Threads       int     `arg:"-t,--threads" default:"0"                     help:"Threads (0=auto)"`
-	UseCPU        bool    `arg:"--use-cpu"           default:"false"                 help:"Disable GPU accleration"`
-	CaptureID     int     `arg:"-a,--audio-device"   default:"-1"                    help:"Audio device ID"`
-	LogFile       string  `arg:"--log-file"          default:""                      help:"Path to log file for actions"`
-	LogLevel      string  `arg:"--log-level"         default:"warn"                  help:"whisper.cpp console log level (debug/info/warn/error/none)"`
+	Preset        string  `arg:"-q,--quality-preset" default:"" help:"Sets model etc automatically. low: no GPU, medium: poor GPU, high: good GPU"`
+	Model         string  `arg:"-m,--model" default:"ggml-tiny.en.bin" help:"Model for real-time transcription, e.g. ggml-medium-q5_0.bin"`
+	FinalModel    string  `arg:"-f,--final-model" default:"ggml-small.en.bin"      help:"Model for finalization, e.g ggml-large-v3-turbo-q5_0.bin, none to disable"`
+	VadThold      float32 `arg:"-s,--silence-detection"  default:"0.8"                   help:"Increase if it doesn't hear you when speaking. Decrease if it transcribes even when silent.'"`
 	HotkeyMods    string  `arg:"--hotkey-mods"       default:"ctrl"                  help:"Modifiers for the global hotkey (ctrl/alt/shift/cmd|win|super, joined by +)"`
 	HotkeyKey     string  `arg:"--hotkey-key"        default:"space"                 help:"Key for the global hotkey (e.g. d, f1, space, escape)"`
+	UseCPU        bool    `arg:"--use-cpu"           default:"false"                 help:"Disable GPU accleration"`
+	CaptureID     int     `arg:"-a,--audio-device"   default:"-1"                    help:"Audio device ID. Devices are listed on startup."`
+	LogFile       string  `arg:"--log-file"          default:""                      help:"Path to log file for actions"`
+	LogLevel      string  `arg:"--log-level"         default:"warn"                  help:"whisper.cpp console log level (debug/info/warn/error/none)"`
 	SkipPauseMode bool    `arg:"--skip-pause-mode"   default:"false"                 help:"Start listening immediately, and do not pause after pasting."`
-	LengthMs      int     `arg:"-l,--length"         default:"30000"                 help:"(ADVANCED: Buffer length in ms)"`
+	LengthMs      int     `arg:"-l,--length"         default:"30000"                 help:"Buffer length in ms. Increase for better accuracy but worse latency during long transcriptions."`
+	NoTray        bool    `arg:"--no-tray"            default:"false"                 help:"Disable the system tray icon"`
+	Threads       int     `arg:"-t,--threads" default:"0"                     help:"Number of threads to use (0=auto)"`
 	MaxTokens     int     `arg:"--max-tokens"        default:"32"                    help:"(ADVANCED: Max tokens per segment)"`
 	AudioCtx      int     `arg:"--audio-ctx"         default:"0"                     help:"(ADVANCED: Audio context size)"`
-	VadThold      float32 `arg:"--vad-thold"         default:"0.8"                   help:"(ADVANCED: VAD threshold)"`
 	FreqThold     float32 `arg:"--freq-thold"        default:"100.0"                 help:"(ADVANCED: High-pass filter cutoff)"`
 	Language      string  `arg:"--lang"              default:"en"                    help:"(ADVANCED: Language code)"`
 	FlashAttn     bool    `arg:"--flash-attn"         default:"true"                  help:"(ADVANCED: Use flash attention)"`
-	NoTray        bool    `arg:"--no-tray"            default:"false"                 help:"Disable the system tray icon"`
 }
 
 // TODO: remove LEngthMS?
@@ -134,6 +134,9 @@ type App struct {
 	segments   []Segment
 	holdActive bool
 	holdStart  time.Time
+
+	transcriptionTime time.Duration
+	vadTimeLast       time.Time
 }
 
 // NewApp constructs an App from parsed CLI flags. It does not allocate any
@@ -388,7 +391,7 @@ func (a *App) startSDLPoller() {
 
 // initUI opens the terminal UI and shows the initial state.
 func (a *App) initUI() error {
-	a.ui = NewTerminalUI(a.hotkeyLabel)
+	a.ui = NewTerminalUI(a.hotkeyLabel, a)
 	if err := a.ui.Init(); err != nil {
 		return fmt.Errorf("failed to initialize UI: %w", err)
 	}
@@ -749,26 +752,34 @@ func (a *App) transcribeTick() error {
 	}
 	ls := a.mic.Get(500)
 
-	if !vad.SimpleVAD(ls, transcribe.WhisperSampleRate, 250, a.params.vadThold, a.params.freqThold, false) {
+	if vad.IsQuiet(ls, transcribe.WhisperSampleRate, 250, a.params.vadThold, a.params.freqThold, false) {
+		a.vadTimeLast = time.Now()
+	}
+	quietTime := time.Now().Sub(a.vadTimeLast).Milliseconds()
+	if quietTime > 500 {
 		a.setState(StateListening)
 		a.ui.ShowStatus(a.state)
 		time.Sleep(16 * time.Millisecond)
 		return nil
 	}
+
 	a.setState(StateDictating)
 	a.ui.ShowStatus(a.state)
+
 	logActionf("vad activated")
 	pcmf32New := a.mic.Get(a.params.lengthMs)
+	//pcmf32New := a.mic.GetFullAudio()
 	a.tLast = tNow
 
-	if len(pcmf32New) == 0 {
+	if len(pcmf32New) < 1600 {
 		time.Sleep(16 * time.Millisecond)
 		return nil
 	}
-
+	t := time.Now()
 	if err := a.ctx.Full(a.wparams, pcmf32New); err != nil {
 		return fmt.Errorf("main: failed to process audio: %w", err)
 	}
+	a.transcriptionTime = time.Since(t)
 
 	transcriptionEnd := a.tLast.Sub(a.tStart).Milliseconds()
 	transcriptionStart := max(0, int(transcriptionEnd)-len(pcmf32New)*1000/transcribe.WhisperSampleRate)
@@ -843,12 +854,12 @@ func run() {
 func applyPreset(cli *CLI) {
 	switch cli.Preset {
 	case "low":
-		cli.Model = "ggml-tiny.en-q5_1.bin"
-		cli.FinalModel = "ggml-small.en-q5_1.bin"
+		cli.Model = "ggml-tiny.en.bin"
+		cli.FinalModel = "ggml-small.en.bin"
 		cli.UseCPU = true
 		cli.LengthMs = 30000
 	case "medium":
-		cli.Model = "ggml-medium-q5_0.bin"
+		cli.Model = "ggml-base.en.bin"
 		cli.FinalModel = "ggml-large-v3-turbo-q5_0.bin"
 		cli.UseCPU = false
 		cli.LengthMs = 60000
@@ -856,7 +867,9 @@ func applyPreset(cli *CLI) {
 		cli.Model = "ggml-large-v3-turbo-q5_0.bin"
 		cli.FinalModel = "ggml-large-v3-turbo-q5_0.bin"
 		cli.UseCPU = false
-		cli.LengthMs = 1800000
+		cli.LengthMs = 180000
+	default:
+		die(nil, 1, "invalid preset: %q", cli.Preset)
 	}
 }
 

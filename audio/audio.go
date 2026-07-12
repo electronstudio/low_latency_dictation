@@ -65,7 +65,7 @@ type AudioAsync struct {
 	mu      sync.Mutex
 
 	audio     []float32
-	audioPos  int
+	AudioPos  int
 	audioLen  int
 	fullAudio []float32
 }
@@ -132,7 +132,7 @@ func (a *AudioAsync) Init(captureID int, sampleRate int) error {
 	a.sampleRate = int(obt.freq)
 	bufSize := (a.sampleRate * a.lenMs) / 1000
 	a.audio = make([]float32, bufSize)
-	a.audioPos = 0
+	a.AudioPos = 0
 	a.audioLen = 0
 	a.fullAudio = make([]float32, 0, bufSize)
 	return nil
@@ -196,8 +196,8 @@ func (a *AudioAsync) callback(samples []float32) {
 
 	bufSize := len(a.audio)
 	for i := 0; i < nSamples; i++ {
-		a.audio[a.audioPos] = samples[i]
-		a.audioPos = (a.audioPos + 1) % bufSize
+		a.audio[a.AudioPos] = samples[i]
+		a.AudioPos = (a.AudioPos + 1) % bufSize
 	}
 	if a.audioLen < bufSize {
 		a.audioLen += nSamples
@@ -235,7 +235,7 @@ func (a *AudioAsync) Get(ms int) []float32 {
 
 	out := make([]float32, nSamples)
 	bufSize := len(a.audio)
-	s0 := a.audioPos - nSamples
+	s0 := a.AudioPos - nSamples
 	if s0 < 0 {
 		s0 += bufSize
 	}
@@ -262,7 +262,7 @@ func (a *AudioAsync) GetFullAudio() []float32 {
 func (a *AudioAsync) Clear() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.audioPos = 0
+	a.AudioPos = 0
 	a.audioLen = 0
 	a.fullAudio = a.fullAudio[:0]
 }

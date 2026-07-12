@@ -23,7 +23,7 @@ func HighPassFilter(data []float32, cutoff, sampleRate float32) {
 // SimpleVAD is an inverted VAD: it returns true when the last lastMs of audio
 // contain relatively low energy, i.e. no speech is detected (silence).
 
-func SimpleVAD(pcmf32 []float32, sampleRate int, lastMs int, vadThold, freqThold float32, verbose bool) bool {
+func IsQuiet(pcmf32 []float32, sampleRate int, lastMs int, vadThold, freqThold float32, verbose bool) bool {
 	nSamples := len(pcmf32)
 	nSamplesLast := (sampleRate * lastMs) / 1000
 

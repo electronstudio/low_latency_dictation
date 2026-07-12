@@ -14,20 +14,22 @@ Make sure your microphone is connected, then run:
 ./dictate
 ```
 
-The first time you run it, the required Whisper model will be downloaded automatically.
-If you do not have a GPU, use `--quality-preset low` option and it will pick a small, fast model.
-If you have any GPU, even an
-old one, you should be able to use ``--quality-preset medium`` and still get reasonable performance.
-Newer GPUs should be able to use `--quality-preset high`.
+The first time you run it, the required Whisper model will be downloaded automatically.  Available models are these:
+https://huggingface.co/ggerganov/whisper.cpp/tree/main
 
-See ``--help`` for complete control over model selection.
+If you do not have a GPU, use `--quality-preset low` option and it will use a small, fast model.
+If you have any GPU, even an
+old one, you should be able to use ``--quality-preset medium`` and still get reasonable performance. (Latency may be a bit worse.)
+Newer GPUs should be able to use `--quality-preset high` and still have reasonable latency.
+
+**See ``--help`` for complete control over model selection and other options.**
 
 A numbered list of audio devices will be printed on startup.  If the wrong one
 is used you can change it with `--audio-device` option.
 
 To begin dictating, tap the _global hotkey_, by default **ctrl+space**.  (If you prefer to begin immediately, use `--skip-pause-mode`)
 
-A lower quality model will display your dictation in real time.  When you have finished, tap the hotkey again to finialize.
+A lower quality model will be used to display your dictation in real time.  When you have finished, tap the hotkey again to finalize.
 Your dictation will then be processed by a higher quality model, copied to the clipboard, and pasted into the current window.
 
 ### Linux

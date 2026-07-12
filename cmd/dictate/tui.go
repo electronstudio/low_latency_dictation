@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -25,10 +26,12 @@ type TerminalUI struct {
 	quitCh    chan struct{}
 	stop      chan struct{}
 	closeOnce sync.Once
+
+	app *App
 }
 
 // NewTerminalUI creates a new terminal UI instance.
-func NewTerminalUI(hotkeyLabel string) *TerminalUI {
+func NewTerminalUI(hotkeyLabel string, app *App) *TerminalUI {
 	return &TerminalUI{
 		hotkeyLabel:     hotkeyLabel,
 		pauseCh:         make(chan struct{}, 1),
@@ -38,6 +41,7 @@ func NewTerminalUI(hotkeyLabel string) *TerminalUI {
 		statusStyle:     tcell.StyleDefault.Reverse(true).Bold(true),
 		finalizingStyle: tcell.StyleDefault.Foreground(tcell.ColorRed),
 		finalizedStyle:  tcell.StyleDefault.Foreground(tcell.ColorGreen),
+		app:             app,
 	}
 }
 
@@ -106,7 +110,7 @@ func (t *TerminalUI) ShowStatus(state State) {
 
 	printToScreen(t.screen, 0, 0, style, s)
 
-	s2 := "dictate V" + versionString + " | keys: [P]ause [Q]uit [D]elete"
+	s2 := "dictate V" + versionString + "   |   keys: [P]ause [Q]uit [D]elete   |   latency " + strconv.FormatInt(t.app.transcriptionTime.Milliseconds(), 10) + "ms  |  buffer " + strconv.Itoa(t.app.mic.AudioPos/1024)
 	printToScreen(t.screen, 0, t.height-1, t.statusStyle, s2)
 
 	t.screen.Show()

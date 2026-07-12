@@ -107,7 +107,7 @@ func resolveModelFile(modelName string) (string, error) {
 	expectedSHA, verify := expectedSHAForModel(modelName)
 
 	url := baseURL + modelName
-	fmt.Printf("Downloading %s...\n", modelName)
+	fmt.Printf("Downloading %s\n", url)
 
 	resp, err := httpClient.Get(url)
 	if err != nil {
