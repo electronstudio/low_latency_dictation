@@ -45,7 +45,7 @@ type CLI struct {
 	LengthMs      int     `arg:"-l,--length"         default:"30000"                 help:"Buffer length in ms. Increase for better accuracy but worse latency during long transcriptions." yaml:"length"`
 	NoTray        bool    `arg:"--no-tray"            default:"false"                 help:"Disable the system tray icon" yaml:"no-tray"`
 	Threads       int     `arg:"-t,--threads" default:"0"                     help:"Number of threads to use (0=auto)" yaml:"threads"`
-	MaxTokens     int     `arg:"--max-tokens"        default:"32"                    help:"(ADVANCED: Max tokens per segment)" yaml:"max-tokens"`
+	MaxTokens     int     `arg:"--max-tokens"        default:"0"                    help:"(ADVANCED: Max tokens per segment (0=no limit))" yaml:"max-tokens"`
 	AudioCtx      int     `arg:"--audio-ctx"         default:"0"                     help:"(ADVANCED: Audio context size)" yaml:"audio-ctx"`
 	FreqThold     float32 `arg:"--freq-thold"        default:"100.0"                 help:"(ADVANCED: High-pass filter cutoff)" yaml:"freq-thold"`
 	Language      string  `arg:"--lang"              default:"en"                    help:"(ADVANCED: Language code)" yaml:"lang"`
