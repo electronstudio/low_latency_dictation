@@ -203,7 +203,7 @@ jobs:
         run: |
           name="dictate-windows-x86_64-${{ needs.get-version.outputs.version }}"
           mkdir -p "dist/$name"
-          cp dictate.exe "dist/$name/"
+          cp dictate.exe "dist/$name/"/
           cp README.md LICENSE "dist/$name/"
 
       - name: Upload binary
@@ -258,14 +258,19 @@ jobs:
           path: artifacts
           pattern: dictate-*-${{ needs.get-version.outputs.version }}
 
-      - name: Build combined zip
+      - name: Build combined archives
         run: |
           version="${{ needs.get-version.outputs.version }}"
           outdir="dist/dictate-all-$version"
           mkdir -p "$outdir"
           for dir in artifacts/dictate-*; do
             name=$(basename "$dir")
-            (cd artifacts && zip -r "../$outdir/$name.zip" "$name")
+            if [[ "$name" == dictate-linux-* ]]; then
+              chmod +x "artifacts/$name/dictate"
+              (cd artifacts && tar -cJf "../$outdir/$name.tar.xz" "$name")
+            else
+              (cd artifacts && zip -r "../$outdir/$name.zip" "$name")
+            fi
           done
 
       - name: Upload combined artifact
