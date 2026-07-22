@@ -1,6 +1,4 @@
-# Dictate
-
-[![AI-DECLARATION: pair](https://img.shields.io/badge/䷼%20AI--DECLARATION-pair-ffedd5?labelColor=ffedd5)](https://ai-declaration.md)
+# Putin (the dictator)
 
 A small TUI and systray Go program that does real-time speech-to-text from your microphone. It uses [whisper.cpp](https://github.com/ggerganov/whisper.cpp) under the hood for the actual inference, so all transcription happens locally.
 
@@ -10,9 +8,29 @@ In terminal:
 In systray:
 ![systray demo video](assets/demo2.gif)
 
+## FAQ
+
+### Why make this when so many similar programs, e.g. Handy, already exist?
+
+At the time I began development, in 2025, there were not so many options.  Handy existed but hotkeys didn't work and it was not very low latency.
+
+### But now, why not use one of those alternatives?
+
+Two reasons:
+* I like mine better.
+* Fuck off.
+
+### Isn't this just AI slop?
+
+It's mostly written by an AI following directions from and having its code reviewed by a senior human engineer.
+If that's "AI slop" then the majority of software ever written is "junior human engineer slop" that was
+developed in the same way only with junior engineers instead of AI.
+
+[![AI-DECLARATION: pair](https://img.shields.io/badge/䷼%20AI--DECLARATION-pair-ffedd5?labelColor=ffedd5)](https://ai-declaration.md)
+
 ## Usage
 
-Install from the releases page.
+Download from the [releases](releases).
 
 Make sure your microphone is connected, then run:
 
@@ -23,6 +41,17 @@ Make sure your microphone is connected, then run:
 The first time you run it, the required Whisper model will be downloaded automatically.  Available models are these:
 https://huggingface.co/ggerganov/whisper.cpp/tree/main
 
+A numbered list of audio devices will be printed on startup.  (Exit the program if
+it went too by fast to see.)  If the wrong device
+is used you can change it with `--audio-device` option.
+
+To begin dictating, tap the _global hotkey_, by default **ctrl+space**.  (If you prefer to begin immediately, use `--skip-pause-mode`)
+
+A lower quality model will be used to display your dictation in real time.  When you have finished, tap the hotkey again to finalize.
+Your dictation will then be processed by a higher quality model, copied to the clipboard, and pasted into the current window.
+
+## Quality
+
 If you do not have a GPU, use `--quality-preset low` option and it will use a small, fast model.
 If you have any GPU, even an
 old one, you should be able to use ``--quality-preset medium`` and still get reasonable performance. (Latency may be a bit worse.)
@@ -31,13 +60,6 @@ Newer GPUs should be able to use `--quality-preset high` and still have reasonab
 **See ``--help`` for complete control over model selection and other options.**  Options can also be set
 in file `~/.config/low_latency_dictation/config.yaml`.
 
-A numbered list of audio devices will be printed on startup.  If the wrong one
-is used you can change it with `--audio-device` option.
-
-To begin dictating, tap the _global hotkey_, by default **ctrl+space**.  (If you prefer to begin immediately, use `--skip-pause-mode`)
-
-A lower quality model will be used to display your dictation in real time.  When you have finished, tap the hotkey again to finalize.
-Your dictation will then be processed by a higher quality model, copied to the clipboard, and pasted into the current window.
 
 ## Global Hotkey
 
@@ -51,7 +73,11 @@ Accepted modifiers (joined by `+`): `ctrl`, `shift`, `alt`, and `cmd` (macOS) / 
 
 `--hotkey-key ""` disables the hotkey.
 
+## OS specific notes
+
 ### Linux
+
+If you install (e.g. the flatpak or Arch package) it will install a desktop shortcut you can launch from your start menu.
 
 Needs uinput group permissions.  Enter this command then reboot:
 
@@ -61,11 +87,12 @@ On Gnome, we recommend you install a [system tray](https://extensions.gnome.org/
 You can double-click the tray icon to start or to paste the transcription into the active window.
 Right click for menu.
 
+
 ### Windows
 
 You can drag the systray icon out of the systray menu to pin it to the taskbar.  Single click the tray icon to start dictation or to copy the transcription to the clipboard. (Paste is not automatic.) Right click for menu.
 
-### macOS (experimental)
+### macOS (experimental and untested)
 
 On macOS the hotkey requires the app to be trusted for **Accessibility** (Input Monitoring). Grant it the first time in *System Settings → Privacy & Security → Accessibility*. 
 
