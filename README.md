@@ -87,6 +87,9 @@ On Gnome, we recommend you install a [system tray](https://extensions.gnome.org/
 You can double-click the tray icon to start or to paste the transcription into the active window.
 Right click for menu.
 
+Requires libnotify to be installed for the popup notifications:
+
+    sudo apt install libnotify-bin
 
 ### Windows
 
