@@ -12,6 +12,22 @@ ICONDIR := $(PREFIX)/share/icons/hicolor
 GGML_VULKAN ?= ON
 GO_LDFLAGS ?=
 
+# CPU_TARGET selects the ggml-cpu instruction set compiled into the static
+# archives. "avx2" (the default) requires a Haswell-era (2013+) x86-64 CPU:
+# AVX2 + FMA + F16C + BMI2. "avx1" targets pre-Haswell CPUs (Sandy/Ivy Bridge
+# and other AVX1-only parts) by keeping only AVX + SSE4.2. The selected value
+# is stamped into the binary via -X main.buildCPU so the runtime guard in
+# cmd/dictate/main.go can refuse to start on an incompatible CPU.
+CPU_TARGET ?= avx2
+ifeq ($(CPU_TARGET),avx2)
+GGML_CPU_FLAGS := -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_BMI2=ON
+else ifeq ($(CPU_TARGET),avx1)
+GGML_CPU_FLAGS := -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF -DGGML_BMI2=OFF
+else
+$(error Unknown CPU_TARGET '$(CPU_TARGET)': use avx2 or avx1)
+endif
+GGML_CPU_FLAGS += -DGGML_AVX=ON -DGGML_SSE42=ON
+
 ifeq ($(GGML_VULKAN),ON)
 WHISPER_LIBS += libs/libggml-vulkan.a
 GO_TAGS := -tags vulkan
@@ -27,7 +43,7 @@ CGO_LDFLAGS := $(SDL2_LDFLAGS) $(VULKAN_LDFLAGS)
 .PHONY: all clean whisper_libs install uninstall
 
 all: whisper_libs
-	CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" go build -ldflags "$(GO_LDFLAGS)" -o $(BINARY) $(GO_TAGS) ./cmd/dictate
+	CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" go build -ldflags "$(GO_LDFLAGS) -X main.buildCPU=$(CPU_TARGET)" -o $(BINARY) $(GO_TAGS) ./cmd/dictate
 
 whisper_libs:
 	@missing=0; \
@@ -41,12 +57,7 @@ whisper_libs:
 			-DGGML_VULKAN=$(GGML_VULKAN) \
 			-DBUILD_SHARED_LIBS=OFF \
 			-DGGML_NATIVE=OFF \
-			-DGGML_AVX2=ON \
-			-DGGML_AVX=ON \
-			-DGGML_FMA=ON \
-			-DGGML_F16C=ON \
-			-DGGML_SSE42=ON \
-			-DGGML_BMI2=ON; \
+			$(GGML_CPU_FLAGS); \
 		cmake --build $(WHISPER_BUILD) --parallel $(CPU_COUNT); \
 		mkdir -p libs; \
 		cp $(WHISPER_BUILD)/src/libwhisper.a libs/; \

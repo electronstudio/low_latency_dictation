@@ -66,6 +66,58 @@ jobs:
           name: dictate-linux-x86_64-${{ needs.get-version.outputs.version }}
           path: dist/dictate-linux-x86_64-${{ needs.get-version.outputs.version }}
 
+  # Pre-Haswell (Sandy/Ivy Bridge and other AVX1-only) x86_64 Linux build.
+  # Identical to build-linux except the ggml-cpu static archives are compiled
+  # with only AVX + SSE4.2 (no AVX2/FMA/F16C/BMI2) via CPU_TARGET=avx1, and the
+  # binary is stamped with -X main.buildCPU=avx1 so the runtime guard stays
+  # permissive. See Makefile.linux and checkCPUBuild() in cmd/dictate/main.go.
+  build-linux-avx1:
+    needs: get-version
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "^1.26"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential cmake git libasound2-dev wget
+          wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
+          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
+          sudo apt-get update -qq
+          sudo apt-get install -y vulkan-sdk
+
+      - name: Build SDL
+        run: |
+          wget https://github.com/libsdl-org/SDL/archive/refs/tags/release-2.32.8.tar.gz
+          tar xvfz release-2.32.8.tar.gz
+          mkdir build && cd build
+          cmake ../SDL-release-2.32.8 -DCMAKE_BUILD_TYPE=Release -DSDL_SHARED=OFF -DSDL_STATIC=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_INSTALL_PREFIX=/usr
+          cmake --build . --config Release --parallel
+          sudo cmake --install .
+
+      - name: Build
+        run: make -f Makefile.linux CPU_TARGET=avx1 GO_LDFLAGS="-s -w"
+
+      - name: Stage artifact
+        run: |
+          name="dictate-linux-x86_64-avx1-${{ needs.get-version.outputs.version }}"
+          mkdir -p "dist/$name"
+          cp dictate "dist/$name/"
+          cp README.md LICENSE "dist/$name/"
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: dictate-linux-x86_64-avx1-${{ needs.get-version.outputs.version }}
+          path: dist/dictate-linux-x86_64-avx1-${{ needs.get-version.outputs.version }}
+
   build-mac-arm64:
     needs: get-version
     runs-on: macos-26
@@ -212,6 +264,70 @@ jobs:
           name: dictate-windows-x86_64-${{ needs.get-version.outputs.version }}
           path: dist/dictate-windows-x86_64-${{ needs.get-version.outputs.version }}
 
+  # Pre-Haswell (Sandy/Ivy Bridge and other AVX1-only) x86_64 Windows build.
+  # Identical to build-windows except the ggml-cpu static archives are compiled
+  # with only AVX + SSE4.2 (no AVX2/FMA/F16C/BMI2) via CPU_TARGET=avx1, and the
+  # binary is stamped with -X main.buildCPU=avx1 so the runtime guard stays
+  # permissive. See Makefile.windows and checkCPUBuild() in cmd/dictate/main.go.
+  build-windows-avx1:
+    needs: get-version
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "^1.26"
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          msystem: UCRT64
+          install: >-
+            base-devel
+            git
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-vulkan-loader
+            mingw-w64-ucrt-x86_64-vulkan-headers
+            mingw-w64-ucrt-x86_64-shaderc
+            mingw-w64-ucrt-x86_64-spirv-headers
+            mingw-w64-ucrt-x86_64-go
+
+      - name: Build SDL
+        shell: msys2 {0}
+        run: |
+          wget https://github.com/libsdl-org/SDL/archive/refs/tags/release-2.32.8.tar.gz
+          tar xvfz release-2.32.8.tar.gz
+          mkdir build && cd build
+          cmake ../SDL-release-2.32.8 -DCMAKE_BUILD_TYPE=Release -DSDL_SHARED=OFF -DSDL_STATIC=ON -DCMAKE_INSTALL_PREFIX=/ucrt64
+          cmake --build . --config Release --parallel
+          cmake --install .
+
+      - name: Build
+        shell: msys2 {0}
+        run: |
+          go clean -cache
+          make -f Makefile.windows CPU_TARGET=avx1 GO_LDFLAGS="-s -w"
+
+      - name: Stage artifact
+        shell: msys2 {0}
+        run: |
+          name="dictate-windows-x86_64-avx1-${{ needs.get-version.outputs.version }}"
+          mkdir -p "dist/$name"
+          cp dictate.exe "dist/$name/"/
+          cp README.md LICENSE "dist/$name/"
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: dictate-windows-x86_64-avx1-${{ needs.get-version.outputs.version }}
+          path: dist/dictate-windows-x86_64-avx1-${{ needs.get-version.outputs.version }}
+
   build-flatpak:
     needs: get-version
     runs-on: ubuntu-24.04
@@ -248,7 +364,7 @@ jobs:
           path: dist/dictate-flatpak-x86_64-${{ needs.get-version.outputs.version }}
 
   combine:
-    needs: [get-version, build-linux, build-mac-arm64, build-mac-x86_64, build-windows, build-flatpak]
+    needs: [get-version, build-linux, build-linux-avx1, build-mac-arm64, build-mac-x86_64, build-windows, build-windows-avx1, build-flatpak]
     runs-on: ubuntu-latest
 
     steps:

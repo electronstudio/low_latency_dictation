@@ -25,10 +25,36 @@ import (
 	"github.com/electronstudio/low_latency_dictation/vad"
 	"golang.design/x/clipboard"
 	"golang.design/x/hotkey/mainthread"
+	"golang.org/x/sys/cpu"
 )
 
 //go:embed VERSION
 var versionString string
+
+// buildCPU records the ggml-cpu instruction-set target the static archives
+// were compiled for ("avx2" or "avx1"). It is set via -ldflags -X at build
+// time by Makefile.linux/Makefile.windows and defaults to "avx2" for the
+// standard Haswell-baseline build. The runtime guard in run() uses it to
+// refuse to start the avx2 build on a CPU that lacks AVX2+FMA, which would
+// otherwise crash with SIGILL inside whisper_init_from_file_with_params.
+var buildCPU = "avx2"
+
+// checkCPUBuild aborts the process with a clear message if the running build
+// requires instruction-set features the host CPU does not have. It must run
+// before any whisper/ggml call (i.e. before App.Setup) so we fail cleanly
+// instead of crashing with SIGILL. The check only applies to x86_64 (the
+// only architecture for which avx2/avx1 variants are produced).
+func checkCPUBuild() {
+	if buildCPU != "avx2" || runtime.GOARCH != "amd64" {
+		return
+	}
+	if !cpu.X86.HasAVX2 || !cpu.X86.HasFMA {
+		fmt.Fprintln(os.Stderr, "this build of dictate requires a CPU with AVX2 and FMA3 (Haswell 2013+).")
+		fmt.Fprintln(os.Stderr, "this CPU lacks those features.")
+		fmt.Fprintln(os.Stderr, "download the avx1 build instead: https://github.com/electronstudio/low_latency_dictation/releases")
+		os.Exit(1)
+	}
+}
 
 type CLI struct {
 	Preset        string  `arg:"-q,--quality-preset" default:"" help:"Sets model etc automatically. low: no GPU, medium: poor GPU, high: good GPU" yaml:"quality-preset"`
@@ -827,6 +853,8 @@ func main() { mainthread.Init(run) }
 // platform. It parses the CLI, builds the App, runs setup, and then enters
 // the main loop. All fatal exits happen from here.
 func run() {
+	checkCPUBuild()
+
 	var cli CLI
 	if err := loadConfig(&cli); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
